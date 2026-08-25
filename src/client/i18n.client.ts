@@ -1,0 +1,601 @@
+import { useSyncExternalStore } from "react";
+
+/**
+ * Prompt Studio client language pack. All user-visible surface/panel copy goes
+ * through `t()` so the whole UI can switch between English and 中文 at runtime.
+ * Server-side errors still arrive in English; they are passed through verbatim.
+ */
+
+export type Language = "en" | "zh";
+
+type Vars = Record<string, string | number>;
+
+const en = {
+  "app.title": "Prompt Studio",
+  "app.title.worklog": "Worklog",
+  "app.title.scratchpad": "Prompt Scratchpad",
+  "app.subtitle": "Plaintext drafts, immutable sends, and linked sessions",
+  "app.subtitle.worklog": "Prompt Studio activity and delivery history",
+  "tab.worklog": "Worklog",
+  "tab.drafts": "Drafts",
+  "language.label": "Language",
+  "language.en": "EN",
+  "language.zh": "中文",
+  "settings.open": "Settings",
+  "settings.title": "Prompt Studio settings",
+  "settings.close": "Close settings",
+  "settings.descriptions.label": "Show descriptions",
+  "settings.descriptions.help": "Show optional guidance beneath section titles.",
+  "settings.history.title": "Snapshots & checkpoints",
+  "settings.history.snapshots": "Recent snapshots",
+  "settings.history.checkpoints": "Recent checkpoints",
+  "settings.history.items": "{count}",
+  "settings.history.starredCount.label": "Count starred checkpoints toward the limit",
+  "settings.history.starredCount.help": "When off, all starred checkpoints are shown in addition to the recent unstarred checkpoints.",
+
+  "search.placeholder": "Search title, tags, and current Markdown",
+  "search.placeholder.worklog": "Search worklog activity",
+  "search.refresh": "Refresh files",
+  "filter.draft": "Draft",
+  "filter.ready": "Ready",
+  "filter.archived": "Archived",
+  "filter.statuses": "Status",
+  "filter.projects": "Projects",
+  "filter.tags": "Tags",
+  "filter.tags.empty": "No tags in the current scope.",
+  "filter.tags.clear": "Clear filters",
+  "filter.tags.select": "Filter by tag {tag}",
+  "filter.tags.deselect": "Remove tag filter {tag}",
+  "scan.plaintextRoot": "Plaintext root: {path}",
+  "scan.warning": "Scan warning: {warning}",
+  "scan.retry": "Retry scan",
+  "nav.paused": "Navigation paused",
+  "nav.blocked.conflict": "This draft has an autosave conflict. Use “Reload canonical file” in the editor before leaving.",
+  "nav.blocked.saving": "Wait for the 700ms autosave to finish before leaving this draft.",
+  "nav.blocked.dispatching": "Wait for the snapshot dispatch to finish before leaving this draft.",
+  "nav.blocked.updating": "Wait for the draft update to finish before leaving this draft.",
+  "nav.createdWhileBusy": "The new draft was created, but the current draft changed while creation was in progress. Wait for autosave, then select the new draft from the list.",
+
+  "worklog.title": "Prompt worklog",
+  "worklog.subtitle": "Read-only history of drafts, scope changes, sends, failures, and linked sessions.",
+  "worklog.empty.title": "No Prompt Studio activity yet",
+  "worklog.empty.body": "Prompt Studio-linked activity will appear here; unrelated agent transcripts stay out.",
+  "worklog.agentLine": "Agent {id}",
+  "timeline.draft": "Draft",
+  "timeline.update": "Updated",
+  "timeline.scope": "Scope",
+  "timeline.status": "Status",
+  "timeline.checkpoint": "Checkpoint",
+  "timeline.pending": "Pending",
+  "timeline.sent": "Sent",
+  "timeline.failed": "Failed",
+  "timeline.session": "Session",
+  "timeline.worklog": "Historical note",
+
+  "snapshot.back": "Back to current draft",
+  "snapshot.title": "Immutable snapshot",
+  "snapshot.empty": "(empty snapshot)",
+  "snapshot.immutable": "Immutable — this is exactly what the agent received.",
+  "snapshot.dispatch": "Dispatch details",
+  "snapshot.view": "View exact snapshot",
+
+  "checkpoint.back": "Back to current draft",
+  "checkpoint.title": "Recovery checkpoint",
+  "checkpoint.empty": "(empty checkpoint)",
+  "checkpoint.readOnly": "Read-only preview. Restoring changes only the current Markdown body.",
+  "checkpoint.reason.ready": "Marked ready",
+  "checkpoint.reason.periodic": "Periodic",
+  "checkpoint.reason.scope": "Before scope change",
+  "checkpoint.reason.send": "Before send",
+  "checkpoint.reason.externalEdit": "External edit",
+  "checkpoint.reason.restore": "Before restore",
+  "checkpoint.restore.action": "Restore this Markdown",
+  "checkpoint.restore.archived": "Restore the archived draft before applying a checkpoint.",
+  "checkpoint.restore.current": "This checkpoint already matches the current Markdown.",
+  "checkpoint.restore.confirmTitle": "Restore checkpoint v{version}?",
+  "checkpoint.restore.confirmBody": "The current Markdown is saved as a new recovery checkpoint first. Title, tags, status, and scope stay unchanged.",
+  "checkpoint.restore.confirm": "Confirm restore",
+  "checkpoint.restore.cancel": "Cancel",
+  "checkpoint.restore.restoring": "Restoring…",
+  "checkpoint.restore.success": "Checkpoint restored as revision v{version}. The previous Markdown was saved as a recovery checkpoint.",
+  "checkpoint.restore.unchanged": "The current Markdown already matched this checkpoint; nothing was changed.",
+
+  "session.open": "Open session",
+  "session.close": "Close session summary",
+  "session.defaultTitle": "Linked Paseo agent",
+  "session.providerUnknown": "provider unknown",
+  "session.exactMessage": "Exact user message",
+  "session.note": "Prompt Studio stores this association only; it does not import the rest of the transcript.",
+
+  "send.title": "Send this revision",
+  "send.subtitle": "Sending freezes an immutable snapshot. Later edits never rewrite what the agent received.",
+  "send.target.existing": "Existing agent",
+  "send.target.new": "New agent",
+  "send.searchAgents": "Search agents",
+  "send.searchAgents.placeholder": "Search non-archived agents",
+  "send.noAgents": "No matching active agents.",
+  "send.sameWorkspace": "same workspace",
+  "send.project.required": "Project / Workspace (required)",
+  "send.project.expand": "Expand Project {project}",
+  "send.project.collapse": "Collapse Project {project}",
+  "send.project.workspaceCount": "{count} Workspaces",
+  "send.workspace.required": "Workspace (required)",
+  "send.provider.required": "Provider (required)",
+  "send.model.required": "Model (required)",
+  "send.mode.required": "Mode (required)",
+  "send.mode.providerDefault": "Mode (provider default)",
+  "send.providerDefault": "Provider default",
+  "send.thinking": "Thinking",
+  "send.modelDefault": "Model default",
+  "send.agentTitle.placeholder": "Agent title (optional)",
+  "send.agentTitle.label": "New agent title",
+  "send.newAgentNote": "The new agent runs in the selected source workspace. Sending does not change this draft's scope.",
+  "send.waitForAutosave": "Wait for autosave before freezing a snapshot.",
+  "send.action": "Freeze snapshot & send",
+  "send.sending": "Sending snapshot…",
+  "send.lineage": "Lineage",
+  "send.lineage.empty": "Nothing sent yet.",
+  "send.lineage.toExisting": "snapshot {id} → existing agent",
+  "send.lineage.toNew": "snapshot {id} → new agent",
+  "send.attempt": "attempt {count}",
+  "send.retry": "Retry same snapshot",
+  "send.retrying": "Retrying…",
+  "send.reconcile": "Reconcile timeline",
+  "send.reconciling": "Reconciling…",
+
+  "editor.back": "Drafts",
+  "editor.retry": "Retry",
+  "editor.currentDraft": "Current mutable draft",
+  "editor.state.saved": "Saved",
+  "editor.state.saving": "Saving…",
+  "editor.state.dirty": "Unsaved",
+  "editor.state.conflict": "Conflict",
+  "editor.state.error": "Save failed",
+  "editor.conflict.help": "The editor has stopped autosaving so external or concurrent edits are not overwritten.",
+  "editor.conflict.reload": "Reload canonical file",
+  "editor.conflict.reloadFailed": "Could not reload the canonical draft.",
+  "editor.title.placeholder": "Untitled",
+  "editor.scope": "Scope",
+  "editor.scope.inbox": "Inbox / global",
+  "editor.scope.locked": "Scope changes unlock after autosave completes.",
+  "editor.scope.pending": "Waiting briefly before applying. Select the current Scope again to cancel.",
+  "editor.status.draft": "Draft",
+  "editor.status.ready": "Ready",
+  "editor.status.updating": "Updating status…",
+  "editor.archive": "Archive",
+  "editor.restore": "Restore",
+  "editor.delete.action": "Permanently delete",
+  "editor.delete.title": "Permanently delete this draft?",
+  "editor.delete.body": "This removes the Markdown, {checkpoints} checkpoint(s), {snapshots} snapshot(s), and {dispatches} dispatch record(s). Accepted messages already stored in Paseo agent sessions are not removed.",
+  "editor.delete.confirmPrompt": "Type the full Draft ID to confirm: {id}",
+  "editor.delete.confirmPlaceholder": "Full Draft ID",
+  "editor.delete.confirm": "Delete permanently",
+  "editor.delete.cancel": "Cancel",
+  "editor.delete.deleting": "Deleting…",
+  "editor.delete.pending": "Reconcile every pending dispatch before permanently deleting this draft.",
+  "editor.tags.placeholder": "Add a tag, for example Area/Topic",
+  "editor.tags.suggestions": "Tag suggestions",
+  "editor.tags.addSuggestion": "Add tag {tag}",
+  "editor.tags.remove": "Remove tag {tag}",
+  "editor.tags.saving": "Saving tags…",
+  "editor.tags.error": "Tags could not be saved: {error}",
+  "tags.directory": "Tag directory",
+  "tags.expand": "Expand {tag}",
+  "tags.collapse": "Collapse {tag}",
+  "tags.rename": "Rename {tag}",
+  "tags.rename.placeholder": "New tag name or path",
+  "tags.rename.save": "Rename",
+  "tags.rename.cancel": "Cancel",
+  "tags.rename.error": "Tag rename failed: {error}",
+  "tags.count": "{count} draft(s)",
+  "tags.count.detail": "{tag}: {direct} direct, {count} including child tags",
+  "tags.manage": "Manage tag {tag}",
+  "tags.manage.close": "Close tag management for {tag}",
+  "tags.batch.add": "Add {tag} to {count} selected drafts",
+  "tags.batch.remove": "Remove {tag} from {count} selected drafts",
+  "editor.markdown.placeholder": "Write the prompt in Markdown…",
+  "editor.warning": "Warning: {warning}",
+  "editor.snapshots": "Snapshots & checkpoints",
+  "editor.snapshots.subtitle": "Recovery checkpoints are periodic. Sent snapshots are permanent and byte-exact.",
+  "editor.snapshots.sent": "Sent snapshots",
+  "editor.snapshots.empty": "No sent snapshots yet.",
+  "editor.checkpoints.recovery": "Recovery checkpoints",
+  "editor.checkpoints.empty": "No recovery checkpoints yet.",
+  "editor.checkpoints": "{count} checkpoint(s), latest {time}",
+  "editor.checkpointVersion": "Checkpoint v{version}",
+  "editor.checkpoint.star": "Star checkpoint v{version}",
+  "editor.checkpoint.unstar": "Remove star from checkpoint v{version}",
+  "editor.send.archived": "Restore this archived draft before sending a new snapshot.",
+  "editor.send.draft": "Mark this draft Ready before sending a snapshot.",
+  "editor.sentVersion": "Sent v{version}",
+
+  "drafts.scoped": "Project drafts",
+  "drafts.all": "Drafts",
+  "drafts.new": "New",
+  "drafts.creating": "Creating…",
+  "drafts.bulk.start": "Batch tags",
+  "drafts.bulk.done": "Done",
+  "drafts.bulk.selectAll": "Select all matching",
+  "drafts.bulk.clear": "Clear selection",
+  "drafts.bulk.selected": "{count} selected",
+  "drafts.bulk.select": "Select draft {title}",
+  "drafts.bulk.tags.placeholder": "Tags to add or remove",
+  "drafts.bulk.add": "Add tags",
+  "drafts.bulk.remove": "Remove tags",
+  "drafts.bulk.applying": "Applying…",
+  "drafts.bulk.empty": "Select at least one draft and one tag.",
+  "drafts.bulk.error": "Batch tag update failed: {error}",
+  "drafts.empty.title": "No matching drafts",
+  "drafts.empty.body": "Create an Untitled plaintext draft or broaden the filters.",
+  "drafts.untitled": "Untitled",
+  "drafts.emptyMarkdown": "Empty Markdown draft",
+  "drafts.select.title": "Select a draft",
+  "drafts.select.body": "Current text is mutable and autosaved. Sends become immutable snapshots with stable message lineage.",
+  "registration.pending.title": "{title} is not registered in Paseo yet",
+  "registration.pending.body": "Registration is pending.",
+  "registration.retry": "Retry Project/Workspace registration",
+  "registration.retrying": "Retrying…",
+
+  "panel.missingWorkspace": "Workspace metadata is unavailable.",
+  "panel.missingAgent": "Agent or workspace metadata is unavailable.",
+
+  "scope.inbox": "Inbox",
+  "scope.project": "Project",
+} as const;
+
+export type MessageKey = keyof typeof en;
+
+const zh: Record<MessageKey, string> = {
+  "app.title": "Prompt Studio",
+  "app.title.worklog": "工作日志",
+  "app.title.scratchpad": "Prompt 草稿板",
+  "app.subtitle": "明文草稿、不可变发送记录与关联会话",
+  "app.subtitle.worklog": "Prompt Studio 活动与派发记录",
+  "tab.worklog": "工作日志",
+  "tab.drafts": "草稿",
+  "language.label": "语言",
+  "language.en": "EN",
+  "language.zh": "中文",
+  "settings.open": "设置",
+  "settings.title": "Prompt Studio 设置",
+  "settings.close": "关闭设置",
+  "settings.descriptions.label": "显示说明文字",
+  "settings.descriptions.help": "显示页面与分区标题下方的可选说明。",
+  "settings.history.title": "快照与检查点",
+  "settings.history.snapshots": "最近快照",
+  "settings.history.checkpoints": "最近检查点",
+  "settings.history.items": "{count}",
+  "settings.history.starredCount.label": "星标检查点计入数量",
+  "settings.history.starredCount.help": "关闭后会显示全部星标检查点，并额外显示设定数量的最近非星标检查点。",
+
+  "search.placeholder": "搜索标题、标签和当前 Markdown",
+  "search.placeholder.worklog": "搜索工作日志活动",
+  "search.refresh": "刷新文件",
+  "filter.draft": "草稿",
+  "filter.ready": "就绪",
+  "filter.archived": "已归档",
+  "filter.statuses": "状态",
+  "filter.projects": "项目",
+  "filter.tags": "标签",
+  "filter.tags.empty": "当前范围内没有标签。",
+  "filter.tags.clear": "清除标签筛选",
+  "filter.tags.select": "按标签 {tag} 筛选",
+  "filter.tags.deselect": "移除标签筛选 {tag}",
+  "scan.plaintextRoot": "明文根目录：{path}",
+  "scan.warning": "扫描警告:{warning}",
+  "scan.retry": "重试扫描",
+  "nav.paused": "已暂停切换",
+  "nav.blocked.conflict": "当前草稿存在自动保存冲突。离开前请在编辑器中点击“重新加载规范文件”。",
+  "nav.blocked.saving": "请等待 700ms 自动保存完成后再离开当前草稿。",
+  "nav.blocked.dispatching": "请等待快照发送完成后再离开当前草稿。",
+  "nav.blocked.updating": "请等待草稿更新完成后再离开当前草稿。",
+  "nav.createdWhileBusy": "新草稿已创建，但创建期间当前草稿发生了变化。请等待自动保存完成后，再从列表中选择新草稿。",
+
+  "worklog.title": "Prompt 工作日志",
+  "worklog.subtitle": "只读检视草稿、Scope 变化、发送、失败及关联会话历史。",
+  "worklog.empty.title": "暂无 Prompt Studio 活动",
+  "worklog.empty.body": "与 Prompt Studio 关联的活动会显示在这里，不导入无关的 Agent 对话记录。",
+  "worklog.agentLine": "Agent {id}",
+  "timeline.draft": "草稿",
+  "timeline.update": "已更新",
+  "timeline.scope": "Scope",
+  "timeline.status": "状态",
+  "timeline.checkpoint": "检查点",
+  "timeline.pending": "待确认",
+  "timeline.sent": "已发送",
+  "timeline.failed": "失败",
+  "timeline.session": "会话",
+  "timeline.worklog": "历史备注",
+
+  "snapshot.back": "返回当前草稿",
+  "snapshot.title": "不可变快照",
+  "snapshot.empty": "(空快照)",
+  "snapshot.immutable": "不可变——这是 Agent 实际收到的精确内容。",
+  "snapshot.dispatch": "发送详情",
+  "snapshot.view": "查看精确快照",
+
+  "checkpoint.back": "返回当前草稿",
+  "checkpoint.title": "恢复检查点",
+  "checkpoint.empty": "（空检查点）",
+  "checkpoint.readOnly": "只读预览。恢复操作只会改变当前 Markdown 正文。",
+  "checkpoint.reason.ready": "手动设为就绪",
+  "checkpoint.reason.periodic": "定期保存",
+  "checkpoint.reason.scope": "Scope 变更前",
+  "checkpoint.reason.send": "发送前",
+  "checkpoint.reason.externalEdit": "外部编辑",
+  "checkpoint.reason.restore": "恢复前",
+  "checkpoint.restore.action": "恢复此 Markdown",
+  "checkpoint.restore.archived": "请先恢复已归档草稿，再应用检查点。",
+  "checkpoint.restore.current": "此检查点与当前 Markdown 已经一致。",
+  "checkpoint.restore.confirmTitle": "恢复检查点 v{version}？",
+  "checkpoint.restore.confirmBody": "系统会先把当前 Markdown 保存为新的恢复检查点。标题、标签、状态和 Scope 均保持不变。",
+  "checkpoint.restore.confirm": "确认恢复",
+  "checkpoint.restore.cancel": "取消",
+  "checkpoint.restore.restoring": "恢复中…",
+  "checkpoint.restore.success": "检查点已恢复为修订 v{version}；此前的 Markdown 已保存为恢复检查点。",
+  "checkpoint.restore.unchanged": "当前 Markdown 已与此检查点一致，没有发生修改。",
+
+  "session.open": "打开会话",
+  "session.close": "收起会话摘要",
+  "session.defaultTitle": "关联的 Paseo Agent",
+  "session.providerUnknown": "未知 provider",
+  "session.exactMessage": "精确用户消息",
+  "session.note": "Prompt Studio 仅保存此关联，不导入对话的其他内容。",
+
+  "send.title": "发送当前版本",
+  "send.subtitle": "发送会冻结一份不可变快照，后续编辑不会改写 Agent 已收到的内容。",
+  "send.target.existing": "已有 Agent",
+  "send.target.new": "新建 Agent",
+  "send.searchAgents": "搜索 Agent",
+  "send.searchAgents.placeholder": "搜索未归档的 Agent",
+  "send.noAgents": "没有匹配的活跃 Agent。",
+  "send.sameWorkspace": "同一 Workspace",
+  "send.project.required": "Project / Workspace(必选)",
+  "send.project.expand": "展开 Project {project}",
+  "send.project.collapse": "收起 Project {project}",
+  "send.project.workspaceCount": "{count} 个 Workspace",
+  "send.workspace.required": "Workspace(必选)",
+  "send.provider.required": "Provider(必选)",
+  "send.model.required": "模型(必选)",
+  "send.mode.required": "模式(必选)",
+  "send.mode.providerDefault": "模式(Provider 默认)",
+  "send.providerDefault": "Provider 默认",
+  "send.thinking": "思考强度",
+  "send.modelDefault": "模型默认",
+  "send.agentTitle.placeholder": "Agent 标题(可选)",
+  "send.agentTitle.label": "新 Agent 标题",
+  "send.newAgentNote": "新 Agent 将在所选源 Workspace 中运行,发送不会改变此草稿的 Scope。",
+  "send.waitForAutosave": "请等待自动保存完成后再冻结快照。",
+  "send.action": "冻结快照并发送",
+  "send.sending": "正在发送快照…",
+  "send.lineage": "发送记录",
+  "send.lineage.empty": "尚未发送。",
+  "send.lineage.toExisting": "快照 {id} → 已有 Agent",
+  "send.lineage.toNew": "快照 {id} → 新建 Agent",
+  "send.attempt": "第 {count} 次尝试",
+  "send.retry": "重试同一快照",
+  "send.retrying": "重试中…",
+  "send.reconcile": "对账时间线",
+  "send.reconciling": "对账中…",
+
+  "editor.back": "草稿",
+  "editor.retry": "重试",
+  "editor.currentDraft": "当前可变草稿",
+  "editor.state.saved": "已保存",
+  "editor.state.saving": "保存中…",
+  "editor.state.dirty": "未保存",
+  "editor.state.conflict": "冲突",
+  "editor.state.error": "保存失败",
+  "editor.conflict.help": "编辑器已停止自动保存,以避免覆盖外部或并发的修改。",
+  "editor.conflict.reload": "重新加载规范文件",
+  "editor.conflict.reloadFailed": "无法重新加载规范草稿。",
+  "editor.title.placeholder": "无标题",
+  "editor.scope": "Scope",
+  "editor.scope.inbox": "Inbox / 全局",
+  "editor.scope.locked": "自动保存完成后才能修改 Scope。",
+  "editor.scope.pending": "短暂等待后再应用；重新选择当前 Scope 可取消此次误操作。",
+  "editor.status.draft": "草稿",
+  "editor.status.ready": "就绪",
+  "editor.status.updating": "状态更新中…",
+  "editor.archive": "归档",
+  "editor.restore": "恢复",
+  "editor.delete.action": "永久删除",
+  "editor.delete.title": "永久删除此草稿？",
+  "editor.delete.body": "这会移除 Markdown、{checkpoints} 个检查点、{snapshots} 个快照和 {dispatches} 条派发记录。Paseo Agent 会话中已经接收的消息不会被删除。",
+  "editor.delete.confirmPrompt": "输入完整 Draft ID 以确认：{id}",
+  "editor.delete.confirmPlaceholder": "完整 Draft ID",
+  "editor.delete.confirm": "永久删除",
+  "editor.delete.cancel": "取消",
+  "editor.delete.deleting": "删除中…",
+  "editor.delete.pending": "永久删除前，必须先完成所有待确认派发的对账。",
+  "editor.tags.placeholder": "添加标签，例如 领域/主题",
+  "editor.tags.suggestions": "标签建议",
+  "editor.tags.addSuggestion": "添加标签 {tag}",
+  "editor.tags.remove": "移除标签 {tag}",
+  "editor.tags.saving": "正在保存标签…",
+  "editor.tags.error": "标签保存失败：{error}",
+  "tags.directory": "标签目录",
+  "tags.expand": "展开 {tag}",
+  "tags.collapse": "收起 {tag}",
+  "tags.rename": "重命名 {tag}",
+  "tags.rename.placeholder": "新的标签名称或路径",
+  "tags.rename.save": "重命名",
+  "tags.rename.cancel": "取消",
+  "tags.rename.error": "标签重命名失败：{error}",
+  "tags.count": "{count} 份草稿",
+  "tags.count.detail": "{tag}：直接 {direct} 份，包含子标签共 {count} 份",
+  "tags.manage": "管理标签 {tag}",
+  "tags.manage.close": "关闭标签 {tag} 的管理操作",
+  "tags.batch.add": "将 {tag} 添加到选中的 {count} 份草稿",
+  "tags.batch.remove": "从选中的 {count} 份草稿移除 {tag}",
+  "editor.markdown.placeholder": "用 Markdown 编写 Prompt…",
+  "editor.warning": "警告:{warning}",
+  "editor.snapshots": "快照与检查点",
+  "editor.snapshots.subtitle": "恢复检查点按周期生成;已发送快照永久保存且字节一致。",
+  "editor.snapshots.sent": "已发送快照",
+  "editor.snapshots.empty": "暂无已发送快照。",
+  "editor.checkpoints.recovery": "恢复检查点",
+  "editor.checkpoints.empty": "暂无恢复检查点。",
+  "editor.checkpoints": "{count} 个检查点,最近于 {time}",
+  "editor.checkpointVersion": "检查点 v{version}",
+  "editor.checkpoint.star": "为检查点 v{version} 添加星标",
+  "editor.checkpoint.unstar": "移除检查点 v{version} 的星标",
+  "editor.send.archived": "请先恢复此已归档草稿,再发送新快照。",
+  "editor.send.draft": "请先将此草稿标记为就绪，再发送快照。",
+  "editor.sentVersion": "已发送 v{version}",
+
+  "drafts.scoped": "项目草稿",
+  "drafts.all": "草稿",
+  "drafts.new": "新建",
+  "drafts.creating": "创建中…",
+  "drafts.bulk.start": "批量标签",
+  "drafts.bulk.done": "完成",
+  "drafts.bulk.selectAll": "选择全部匹配草稿",
+  "drafts.bulk.clear": "清除选择",
+  "drafts.bulk.selected": "已选择 {count} 份",
+  "drafts.bulk.select": "选择草稿 {title}",
+  "drafts.bulk.tags.placeholder": "要添加或移除的标签",
+  "drafts.bulk.add": "添加标签",
+  "drafts.bulk.remove": "移除标签",
+  "drafts.bulk.applying": "应用中…",
+  "drafts.bulk.empty": "请至少选择一份草稿和一个标签。",
+  "drafts.bulk.error": "批量更新标签失败：{error}",
+  "drafts.empty.title": "没有匹配的草稿",
+  "drafts.empty.body": "创建一份无标题明文草稿,或放宽筛选条件。",
+  "drafts.untitled": "无标题",
+  "drafts.emptyMarkdown": "空 Markdown 草稿",
+  "drafts.select.title": "选择一份草稿",
+  "drafts.select.body": "当前正文可变并自动保存;发送会生成带稳定消息 lineage 的不可变快照。",
+  "registration.pending.title": "{title} 尚未在 Paseo 中注册",
+  "registration.pending.body": "注册待完成。",
+  "registration.retry": "重试 Project/Workspace 注册",
+  "registration.retrying": "重试中…",
+
+  "panel.missingWorkspace": "Workspace 元数据不可用。",
+  "panel.missingAgent": "Agent 或 Workspace 元数据不可用。",
+
+  "scope.inbox": "Inbox",
+  "scope.project": "项目",
+};
+
+export const dictionaries: Record<Language, Record<MessageKey, string>> = { en, zh };
+
+const LANGUAGE_STORAGE_KEY = "prompt-studio.language";
+const DESCRIPTIONS_STORAGE_KEY = "prompt-studio.show-descriptions";
+
+function detectInitialLanguage(): Language {
+  try {
+    const storage = (globalThis as { localStorage?: Storage }).localStorage;
+    const stored = storage?.getItem(LANGUAGE_STORAGE_KEY);
+    if (stored === "en" || stored === "zh") return stored;
+  } catch {
+    // Storage is unavailable on some native runtimes; fall through.
+  }
+  try {
+    const locale = (globalThis as { navigator?: { language?: string } }).navigator?.language;
+    if (typeof locale === "string" && locale.toLowerCase().startsWith("zh")) return "zh";
+  } catch {
+    // Ignore and use the default.
+  }
+  return "en";
+}
+
+function detectInitialShowDescriptions(): boolean {
+  try {
+    return (globalThis as { localStorage?: Storage }).localStorage?.getItem(DESCRIPTIONS_STORAGE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+let currentLanguage: Language = detectInitialLanguage();
+let currentShowDescriptions = detectInitialShowDescriptions();
+const listeners = new Set<() => void>();
+
+function emit() {
+  for (const listener of listeners) listener();
+}
+
+export function setLanguage(language: Language) {
+  if (language === currentLanguage) return;
+  currentLanguage = language;
+  try {
+    (globalThis as { localStorage?: Storage }).localStorage?.setItem(LANGUAGE_STORAGE_KEY, language);
+  } catch {
+    // Persistence is best-effort only.
+  }
+  emit();
+}
+
+export function getLanguage(): Language {
+  return currentLanguage;
+}
+
+export function setShowDescriptions(showDescriptions: boolean) {
+  if (showDescriptions === currentShowDescriptions) return;
+  currentShowDescriptions = showDescriptions;
+  try {
+    (globalThis as { localStorage?: Storage }).localStorage?.setItem(
+      DESCRIPTIONS_STORAGE_KEY,
+      String(showDescriptions),
+    );
+  } catch {
+    // Persistence is best-effort only.
+  }
+  emit();
+}
+
+export function getShowDescriptions(): boolean {
+  return currentShowDescriptions;
+}
+
+function interpolate(template: string, vars?: Vars): string {
+  if (!vars) return template;
+  return template.replace(/\{(\w+)\}/g, (match, name: string) =>
+    Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : match,
+  );
+}
+
+export function translate(language: Language, key: MessageKey, vars?: Vars): string {
+  return interpolate(dictionaries[language][key] ?? dictionaries.en[key] ?? key, vars);
+}
+
+export function localeFor(language: Language): string {
+  return language === "zh" ? "zh-CN" : "en-US";
+}
+
+export interface I18n {
+  language: Language;
+  locale: string;
+  setLanguage: (language: Language) => void;
+  setShowDescriptions: (showDescriptions: boolean) => void;
+  showDescriptions: boolean;
+  t: (key: MessageKey, vars?: Vars) => string;
+}
+
+export function useI18n(): I18n {
+  const language = useSyncExternalStore(
+    (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    getLanguage,
+    getLanguage,
+  );
+  const showDescriptions = useSyncExternalStore(
+    (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    getShowDescriptions,
+    getShowDescriptions,
+  );
+  return {
+    language,
+    locale: localeFor(language),
+    setLanguage,
+    setShowDescriptions,
+    showDescriptions,
+    t: (key, vars) => translate(language, key, vars),
+  };
+}

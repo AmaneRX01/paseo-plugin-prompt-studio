@@ -1,0 +1,15 @@
+# Local and source-control metadata
+.git/
+.github/
+.gitattributes
+AGENTS.md
+saved_resource.html
+.playwright-mcp/
+
+# Development-only inputs and outputs
+node_modules/
+coverage/
+tests/
+scripts/
+*.tgz
+*.log
