@@ -12,7 +12,9 @@ import type { ContainerId } from "../../shared/contracts.shared";
 import {
   assertSafePath,
   assertTreeSafe,
+  appendTextIfUnchanged,
   atomicWrite,
+  atomicWriteIfUnchanged,
   exists,
   formatError,
   normalizePath,
@@ -52,10 +54,59 @@ const LEGACY_ROOT_READMES = new Set([
   "# Paseo Prompt Studio\n\nThis is a schema-v3 plaintext prompt vault for Draft metadata; containers and immutable lineage remain schema v2. `Prompt-Studio-Inbox/` contains global drafts; project companions live under `companions/`. `catalog.json` is a disposable derived index. Daemon-local paths and Paseo IDs live only under `local/placements/`.\n",
 ]);
 
+const AGENTS_MANAGED_START = "<!-- prompt-studio:managed-agent-access:start -->";
+const AGENTS_MANAGED_END = "<!-- prompt-studio:managed-agent-access:end -->";
+const AGENTS_MANAGED_BLOCK = `${AGENTS_MANAGED_START}
+## Generated-Agent access boundary
+
+The Prompt Studio managed vault is application data, not project context. Any Agent launched by Prompt Studio must never read, search, enumerate, summarize, or modify this vault or any descendant path. Prompt Studio's trusted daemon process may access it only to implement storage and recovery workflows.
+${AGENTS_MANAGED_END}`;
+
 const ROOT_AGENTS = `# Prompt Studio vault
 
 This is the only Paseo Project managed by Prompt Studio. Drafts are plaintext under \`drafts/dr_*/draft.md\`; \`meta.json\` records optimistic version/hash metadata and Project Scope. Treat checkpoints, snapshots, and dispatch records as lineage. External project folders are links recorded in \`local/project-map.json\`; a missing linked folder must never cause Draft deletion. Worklog is a read-only derived view and \`catalog.json\` is not canonical.
+
+${AGENTS_MANAGED_BLOCK}
 `;
+
+type ManagedAgentsBlockPlan =
+  | { kind: "current" }
+  | { kind: "append"; suffix: string }
+  | { kind: "replace"; next: string };
+
+function planManagedAgentsBlock(current: string): ManagedAgentsBlockPlan {
+  const start = current.indexOf(AGENTS_MANAGED_START);
+  const end = current.indexOf(AGENTS_MANAGED_END);
+  const duplicateStart = start === -1
+    ? -1
+    : current.indexOf(AGENTS_MANAGED_START, start + AGENTS_MANAGED_START.length);
+  const duplicateEnd = end === -1
+    ? -1
+    : current.indexOf(AGENTS_MANAGED_END, end + AGENTS_MANAGED_END.length);
+  if (
+    (start === -1) !== (end === -1)
+    || (start !== -1 && end < start)
+    || duplicateStart !== -1
+    || duplicateEnd !== -1
+  ) {
+    throw new Error("Prompt Studio AGENTS.md contains a malformed managed access block");
+  }
+  if (start === -1) {
+    const separator = current.length === 0 || current.endsWith("\n\n")
+      ? ""
+      : current.endsWith("\n")
+        ? "\n"
+        : "\n\n";
+    return { kind: "append", suffix: `${separator}${AGENTS_MANAGED_BLOCK}\n` };
+  }
+  const after = end + AGENTS_MANAGED_END.length;
+  const existingBlock = current.slice(start, after);
+  if (existingBlock === AGENTS_MANAGED_BLOCK) return { kind: "current" };
+  return {
+    kind: "replace",
+    next: `${current.slice(0, start)}${AGENTS_MANAGED_BLOCK}${current.slice(after)}`,
+  };
+}
 
 export interface ResolvedSourceProject {
   projectId: string;
@@ -505,7 +556,32 @@ export class VaultRepository {
     } else {
       await writeIfMissing(readmePath, ROOT_README, this.rootPath);
     }
-    await writeIfMissing(path.join(this.rootPath, "AGENTS.md"), ROOT_AGENTS, this.rootPath);
+    const agentsPath = path.join(this.rootPath, "AGENTS.md");
+    const createdAgents = await writeIfMissing(agentsPath, ROOT_AGENTS, this.rootPath);
+    if (!createdAgents) {
+      await assertSafePath(this.rootPath, agentsPath);
+      const observed = await readFile(agentsPath, "utf8");
+      const plan = planManagedAgentsBlock(observed);
+      if (plan.kind === "append") {
+        try {
+          await appendTextIfUnchanged(agentsPath, observed, plan.suffix, this.rootPath);
+        } catch (error) {
+          throw new Error(
+            `Prompt Studio AGENTS.md changed while its managed block was being appended; `
+            + `external content was not overwritten: ${formatError(error)}`,
+          );
+        }
+      } else if (plan.kind === "replace") {
+        try {
+          await atomicWriteIfUnchanged(agentsPath, observed, plan.next, this.rootPath);
+        } catch (error) {
+          throw new Error(
+            `Prompt Studio AGENTS.md managed block cannot be replaced safely; `
+            + `${formatError(error)}`,
+          );
+        }
+      }
+    }
   }
 
   private async removeEmptyLegacyParents(): Promise<void> {

@@ -1,6 +1,6 @@
 # Prompt Studio Project Manual
 
-> Document version: 1.0
+> Document version: 1.1
 >
 > Project: Prompt Studio for Paseo
 >
@@ -44,6 +44,12 @@ Every dispatch has a stable `clientMessageId`. A failed retry reuses the origina
 On wide layouts, the editor shows a stable three-character draft code beside the version, for example `AV9`. Characters come from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`, excluding visually ambiguous characters such as `I`, `O`, `0`, and `1`.
 
 This code is only a visual aid. Storage, RPCs, and dispatch lineage always use the complete Draft ID.
+
+### 2.6 Recoverable Prompt generation
+
+For a saved Project-scoped draft, Prompt Studio can ask a new Agent to optimize the task from related Prompt context or only improve its prose and Markdown format. The related task can include current/reference checkpoint history, tag matches, time windows, selected Projects, and Inbox. Before launch, the UI reports both eligible and actually included Prompt/version counts and any whole-version budget trimming.
+
+Each generation is persisted before Agent creation with stable reconciliation identifiers. Only one unresolved generation may exist for a Draft. A successful reply first creates an undo checkpoint, then becomes a new generated revision of the same Draft. A concurrent edit is never overwritten: the exact reply remains available as an explicit conflict candidate.
 
 ## 3. Product surfaces
 
@@ -92,7 +98,18 @@ Checkpoints are recovery data. They remain in the draft lineage and are counted 
 
 Worklog is strictly read-only. It has no UI, RPC, or server path for adding manual log entries. Legacy Worklog Markdown remains available as read-only historical notes and is never rewritten.
 
-### 3.5 Localization and responsive layout
+### 3.5 Prompt Agent actions and settings
+
+The action bar between tags and the editor has two actions:
+
+- **Optimize from related Prompts** opens the context filter and count preview. History defaults on, time defaults to 90 days, and the current Draft's tags and Project are selected. Project-file inspection defaults off for every run.
+- **Format Prompt** directly performs a light prose/Markdown cleanup. It never includes other Prompts, history, or Project files.
+
+Settings keeps separate provider, model, and thinking choices for these tasks. If a saved choice is no longer available, Prompt Studio reports it and does not silently choose another. During an unresolved job, body/scope/state/send/archive actions for that Draft are locked, but other Drafts remain browsable. Generated revisions display a **Generated** marker in the editor and Draft list.
+
+Paseo 0.5.1 has no provider-independent readable-path allowlist or OS/container boundary. Prompt Studio rejects its managed vault as Agent cwd, uses the strongest provider-native read-only settings available, and repeats the file-access restrictions in the localized task prompt. A behavioral-only warning means exactly that; it is not hard filesystem isolation.
+
+### 3.6 Localization and responsive layout
 
 The interface supports English and Simplified Chinese. It adapts to wide and compact layouts and uses Paseo theme tokens for light and dark themes.
 
@@ -107,6 +124,7 @@ The interface supports English and Simplified Chinese. It adapts to wide and com
 | Checkpoint | A staged Markdown copy used for recovery |
 | Snapshot | An immutable, byte-exact Markdown copy frozen before dispatch |
 | Dispatch | One delivery of a snapshot, including its target, state, attempts, and message ID |
+| Generation | One durable Prompt-optimization job, its exact Agent request/reply evidence, and apply/conflict provenance |
 | Lineage | The relationships among a draft, snapshots, dispatches, and agent sessions |
 | Worklog | A read-only activity timeline derived from canonical draft and dispatch facts |
 | Canonical data | Markdown and JSON files that serve as the source of truth |
@@ -393,9 +411,11 @@ Add focused recovery and regression tests for changes to:
 6. Drafts have no starred state, filter, or pinning. Only ready drafts can send; checkpoint stars remain independent.
 7. A scope change preserves the Draft ID and `drafts/dr_<id>` path and leaves exactly one canonical lineage.
 8. Existing-agent sends, new-agent sends, failed retries, and timeline reconciliation all work.
-9. Permanent deletion requires an archived draft and the complete Draft ID. Pending or malformed dispatches block deletion, and an interrupted deletion resumes from its journal.
-10. Deleting `catalog.json` still allows a complete list and timeline rebuild.
-11. Wide and compact layouts, English and Simplified Chinese, and light and dark themes remain usable. Destructive actions use theme status colors, and confirmations fit compact layouts.
+9. Configure both Prompt Agent tasks. Verify related-context counts and truncation, format-only isolation, Project-read confirmation, Generated provenance, ready-to-draft downgrade, and the undo checkpoint.
+10. Edit the canonical Markdown during generation. Confirm that the reply becomes a conflict candidate, stale apply is rejected, and explicit apply/discard resolves the Draft lock without creating a second Agent.
+11. Permanent deletion requires an archived draft and the complete Draft ID. Pending dispatch or generation lineage blocks deletion, and an interrupted deletion resumes from its journal.
+12. Deleting `catalog.json` still allows a complete list and timeline rebuild.
+13. Wide and compact layouts, English and Simplified Chinese, and light and dark themes remain usable. Destructive actions use theme status colors, and confirmations fit compact layouts.
 
 ## 12. Troubleshooting
 
@@ -427,6 +447,10 @@ The data remains intact. Use **Retry Project/Workspace registration** in the vis
 
 This is expected. The agent received the snapshot frozen at send time, while the draft remained editable. Open **Snapshots and checkpoints** to inspect the exact content sent.
 
+### A Prompt Agent is still running or needs attention
+
+Return to the Draft to inspect the durable job. **Sync** reconciles the recorded Agent and never creates a replacement. A timeout does not cancel the Agent. Permission/provider failures preserve their state; use **Abandon** only when you intentionally want to resolve that job. If a generated reply conflicts with a newer Draft revision, apply it against the latest version or discard it.
+
 ## 13. Known boundaries
 
 - Prompt Studio manages daemon-local data only. It does not provide cross-daemon, Git, or cloud synchronization.
@@ -435,6 +459,7 @@ This is expected. The agent received the snapshot frozen at send time, while the
 - Permanent deletion removes only the local Prompt Studio canonical lineage. It cannot delete messages already sent to a Paseo agent session.
 - An unavailable external Project directory never deletes its `project-map.json` entry or drafts. Restore the directory and refresh to make the link usable again.
 - `projectId`, `workspaceId`, and absolute paths are machine-local placement data, not portable identity.
+- Prompt Agent read restrictions are defense in depth, not an OS/container boundary. Providers marked behavioral-only may technically read other daemon-user-readable paths despite the task prohibition.
 - The Store remains the project's largest aggregation point. Prefer extracting a focused repository before adding more persistence behavior.
 
 ## 14. Related documentation

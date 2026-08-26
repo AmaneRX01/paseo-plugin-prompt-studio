@@ -34,6 +34,7 @@ Automated tests cover these high-risk paths:
 - Checkpoint content reads, hash/lineage validation, pre-restore backups, reversible restores, no-ops, and stale-revision rejection.
 - Snapshot immutability, stable message IDs, failed-send retries, retry rejection while archived, and read-only reconciliation after archive.
 - Existing/new Agent dispatch boundaries and linked session timelines.
+- Prompt generation context filtering/budgeting, durable single-flight launch reconciliation, provider policies, exact response capture, conflict candidates, and generated provenance.
 - The absence of Worklog write paths, no writable Worklog directory in the vault, and safe read-only compatibility with legacy Worklog Markdown.
 - Junction and symlink boundary protection.
 
@@ -57,9 +58,12 @@ Automated tests cover these high-risk paths:
 6. Perform `A → B → A` within one second. The UI must cancel the pending scope change without changing the version, checkpoints, or events. Remaining on B past the stabilization window must submit once, and Worklog must show the source and target scope without expanding checkpoint activity.
 7. Archive and restore from both draft and ready, confirming restoration to the prior active state. Permanent deletion must require the full Draft ID, reject pending dispatches, and remove the draft from the list, Worklog, canonical lineage, container events, and catalog.
 8. Delete `catalog.json`, select **Refresh files**, and confirm a complete plaintext rebuild. Temporarily move a linked Project directory and confirm that only a link warning appears and no drafts are deleted. Ordinary window focus must not trigger continuous full scans.
-9. Verify wide/compact layouts, English/Chinese UI, and light/dark themes. Pay particular attention to the ready accent, checkpoint stars, and the permanent-delete danger token.
-10. Open checkpoints with different reasons in **Snapshots and checkpoints**. Confirm read-only content, secondary confirmation, the pre-restore backup, and success feedback. Create a conflict with an external edit and confirm that restore does not overwrite the canonical file.
-11. Create, remove, and autocomplete flat and hierarchical tags. Verify the tree, counts, click-to-filter behavior, rename/merge, and bulk add/remove in wide and compact layouts. Confirm that tag actions do not change draft version, `updatedAt`, status, or checkpoint/event counts.
+9. Configure related and format generation independently. In a disposable external Project, verify provider/model/thinking validation, localized output-only instructions, related Prompt/history counts, whole-version budget trimming, and the per-run Project-read confirmation.
+10. Verify Codex/Kimi access-on and access-off policy, managed-vault/overlapping-root rejection, and the visible warning that Paseo 0.5.1 is not an OS/container boundary. Never point the test at the Prompt Studio vault.
+11. Exercise generation recovery: prepared restart, lost create acknowledgement, timeout, permission, error, empty reply, external edit conflict, stale/successful candidate apply, discard, abandon, and Agent archive after durable terminal state. No path may create a duplicate Agent.
+12. Verify wide/compact layouts, English/Chinese UI, and light/dark themes. Pay particular attention to the ready/generated accents, checkpoint stars, Prompt Agent modals, and the permanent-delete danger token.
+13. Open checkpoints with different reasons in **Snapshots and checkpoints**. Confirm read-only content, secondary confirmation, the pre-restore backup, and success feedback. Create a conflict with an external edit and confirm that restore does not overwrite the canonical file.
+14. Create, remove, and autocomplete flat and hierarchical tags. Verify the tree, counts, click-to-filter behavior, rename/merge, and bulk add/remove in wide and compact layouts. Confirm that tag actions do not change draft version, `updatedAt`, status, or checkpoint/event counts.
 
 ## Paseo API compatibility
 

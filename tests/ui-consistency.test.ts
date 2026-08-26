@@ -88,8 +88,39 @@ test("the corner settings menu owns language, descriptions, and history limits",
   assert.match(headerSource, /setSnapshotLimit/);
   assert.match(headerSource, /setCheckpointLimit/);
   assert.match(headerSource, /onValueChange=\{setStarredCheckpointsCountTowardLimit\}/);
+  assert.match(headerSource, /<ScrollView/);
+  assert.match(headerSource, /<GenerationSettingsSection/);
   assert.match(uiSource, /export function Description/);
   assert.match(uiSource, /showDescriptions \? <Hint theme=\{theme\}>\{children\}<\/Hint> : null/);
+});
+
+test("prompt agent actions keep agent replies behind server reconciliation", () => {
+  const actionSource = readFileSync(join(clientRoot, "studio", "prompt-agent-actions.client.tsx"), "utf8");
+  const settingsSource = readFileSync(join(clientRoot, "studio", "generation-settings.client.tsx"), "utf8");
+
+  assert.match(actionSource, /generationPreviewRpc/);
+  assert.match(actionSource, /generationStartRpc/);
+  assert.match(actionSource, /waitForFinish\(AGENT_WAIT_TIMEOUT_MS\)/);
+  assert.match(actionSource, /generationSyncRpc/);
+  assert.match(actionSource, /generationApplyCandidateRpc/);
+  assert.match(actionSource, /generationDiscardRpc/);
+  assert.match(actionSource, /generation\.baseVersion/);
+  assert.match(actionSource, /job\.status === "prepared"/);
+  assert.doesNotMatch(actionSource, /responseMarkdown:\s*/);
+  assert.match(actionSource, /allowProjectRead/);
+  assert.match(actionSource, /generation\.security\.warning/);
+  assert.match(actionSource, /accessibilityViewIsModal/);
+  assert.match(actionSource, /accessibilityRole="switch"/);
+  assert.match(actionSource, /contentContainerStyle=\{\{ gap: 14, paddingBottom: 2 \}\}/);
+  assert.match(actionSource, /tagPaths: \[\.\.\.detail\.summary\.tags\]/);
+  assert.match(actionSource, /task: "format", contextFilters: null, projectRead: false/);
+  assert.match(actionSource, /detail\.summary\.contentOrigin\.kind === "generated"/);
+  assert.match(settingsSource, /generationSettingsUpdateRpc/);
+  assert.match(settingsSource, /task="related"/);
+  assert.match(settingsSource, /task="format"/);
+  assert.match(settingsSource, /useQuery\(/);
+  assert.match(settingsSource, /useMutation\(/);
+  assert.doesNotMatch(settingsSource, /localStorage/);
 });
 
 test("the Command Center exposes one persistent Scratchpad without Quick Draft simulations", () => {

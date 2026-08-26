@@ -29,6 +29,8 @@ import {
   ensureAndRegisterProjectContainer,
   type PaseoWorkspaceRegistrar,
 } from "./project-registration.server";
+import { createGenerationHandlers } from "./generation-handlers.server";
+import { PromptStudioGenerationStore } from "./generation-store.server";
 import { normalizePath } from "./storage/filesystem.server";
 import { PromptStudioStore, type ResolvedSourceProject } from "./store.server";
 
@@ -478,4 +480,8 @@ export function createHandlers(store = new PromptStudioStore()) {
 
 // Paseo 0.5.1 bundles client and server halves separately. Keep this singleton at module scope;
 // index.ts must reference these properties inside plugin.handle(...) and must not call the factory.
-export const handlers = createHandlers();
+export const promptStudioStore = new PromptStudioStore();
+export const handlers = createHandlers(promptStudioStore);
+export const generationHandlers = createGenerationHandlers(
+  new PromptStudioGenerationStore(promptStudioStore),
+);

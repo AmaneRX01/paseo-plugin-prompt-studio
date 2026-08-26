@@ -1,6 +1,6 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useMemo, useState } from "react";
-import { Modal, Pressable, Switch, Text, View } from "react-native";
+import { Modal, Pressable, ScrollView, Switch, Text, View } from "react-native";
 import { useI18n, type MessageKey } from "../i18n.client";
 import { Hint, NativeButton, SegmentedControl, font, paletteOf, uiMetrics } from "../ui.client";
 import {
@@ -11,6 +11,7 @@ import {
   useHistoryPreferences,
   type HistoryLimit,
 } from "./history-preferences.client";
+import { GenerationSettingsSection } from "./generation-settings.client";
 
 function StudioSettings({ theme, compact }: { theme: PluginTheme; compact: boolean }) {
   const { language, setLanguage, setShowDescriptions, showDescriptions, t } = useI18n();
@@ -50,6 +51,7 @@ function StudioSettings({ theme, compact }: { theme: PluginTheme; compact: boole
               borderWidth: 1,
               elevation: 12,
               gap: 16,
+              maxHeight: "86%",
               maxWidth: 360,
               padding: 16,
               shadowColor: theme.colors.foreground,
@@ -74,7 +76,13 @@ function StudioSettings({ theme, compact }: { theme: PluginTheme; compact: boole
               />
             </View>
 
-            <View style={{ gap: 8 }}>
+            <ScrollView
+              contentContainerStyle={{ gap: 16, paddingBottom: 4 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+              style={{ minHeight: 0 }}
+            >
+              <View style={{ gap: 8 }}>
               <Text style={{ color: theme.colors.foregroundMuted, fontSize: font.caption, fontWeight: "500" }}>
                 {t("language.label")}
               </Text>
@@ -88,9 +96,9 @@ function StudioSettings({ theme, compact }: { theme: PluginTheme; compact: boole
                 small
                 theme={theme}
               />
-            </View>
+              </View>
 
-            <View style={{ alignItems: "center", flexDirection: "row", gap: 12 }}>
+              <View style={{ alignItems: "center", flexDirection: "row", gap: 12 }}>
               <View style={{ flex: 1, gap: 3 }}>
                 <Text style={{ color: theme.colors.foreground, fontSize: font.body, fontWeight: "500" }}>
                   {t("settings.descriptions.label")}
@@ -105,9 +113,9 @@ function StudioSettings({ theme, compact }: { theme: PluginTheme; compact: boole
                 trackColor={{ false: palette.controlStrong, true: theme.colors.accent }}
                 value={showDescriptions}
               />
-            </View>
+              </View>
 
-            <View style={{ gap: 10 }}>
+              <View style={{ gap: 10 }}>
               <Text style={{ color: theme.colors.foreground, fontSize: font.body, fontWeight: "500" }}>
                 {t("settings.history.title")}
               </Text>
@@ -157,7 +165,9 @@ function StudioSettings({ theme, compact }: { theme: PluginTheme; compact: boole
                   value={starredCheckpointsCountTowardLimit}
                 />
               </View>
-            </View>
+              </View>
+              <GenerationSettingsSection compact={compact} theme={theme} visible={open} />
+            </ScrollView>
           </View>
         </View>
       </Modal>

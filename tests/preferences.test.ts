@@ -32,6 +32,10 @@ test("settings copy is available in both languages", () => {
   assert.equal(translate("zh", "settings.descriptions.label"), "显示说明文字");
   assert.equal(translate("en", "settings.history.snapshots"), "Recent snapshots");
   assert.equal(translate("zh", "settings.history.checkpoints"), "最近检查点");
+  assert.equal(translate("en", "settings.generation.related"), "Related-prompt optimization");
+  assert.equal(translate("zh", "settings.generation.format"), "行文格式润色");
+  assert.equal(translate("en", "generation.related.action"), "Optimize with related prompts");
+  assert.equal(translate("zh", "editor.generated"), "生成式");
 });
 
 test("history preferences and checkpoint stars are shared and reversible", () => {

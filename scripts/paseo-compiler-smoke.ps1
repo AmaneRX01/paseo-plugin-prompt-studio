@@ -80,6 +80,15 @@ import(__COMPILER__).then(async ({ compilePlugin }) => {
     "prompt-studio.dispatch-send",
     "prompt-studio.dispatch-retry",
     "prompt-studio.dispatch-reconcile",
+    "prompt-studio.generation-settings-get",
+    "prompt-studio.generation-settings-update",
+    "prompt-studio.generation-preview",
+    "prompt-studio.generation-start",
+    "prompt-studio.generation-get",
+    "prompt-studio.generation-sync",
+    "prompt-studio.generation-apply-candidate",
+    "prompt-studio.generation-discard",
+    "prompt-studio.generation-abandon",
   ];
   if (JSON.stringify(serverSeen) !== JSON.stringify(expectedServer)) {
     throw new Error(`Unexpected server RPCs: ${serverSeen.join(", ")}`);

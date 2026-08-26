@@ -3,6 +3,7 @@ import {
   access,
   lstat,
   mkdir,
+  open,
   readFile,
   realpath,
   readdir,
@@ -128,6 +129,95 @@ export async function atomicWrite(filePath: string, content: string, boundaryPat
   }
 }
 
+/**
+ * Node does not expose a portable compare-and-swap replacement for directory
+ * entries. A check followed by rename can still overwrite an editor's atomic
+ * save, so a differing replacement is deliberately refused.
+ */
+export async function atomicWriteIfUnchanged(
+  filePath: string,
+  expectedContent: string,
+  content: string,
+  boundaryPath: string,
+): Promise<void> {
+  await assertSafePath(boundaryPath, filePath);
+  const [observedContent, observedInfo] = await Promise.all([
+    readFile(filePath, "utf8"),
+    lstat(filePath),
+  ]);
+  if (observedInfo.isSymbolicLink() || !observedInfo.isFile()) {
+    throw new Error(`Conditional atomic write requires a regular file: ${filePath}`);
+  }
+  if (observedContent !== expectedContent) {
+    throw new Error(`File changed before conditional atomic write: ${filePath}`);
+  }
+  if (content === expectedContent) return;
+  throw new Error(
+    `Atomic compare-and-swap replacement is unavailable for ${filePath}; file was left unchanged`,
+  );
+}
+
+export interface ConditionalAppendOptions {
+  /** Used by recovery tests to inject an editor save at the commit boundary. */
+  beforeAppend?: () => void | Promise<void>;
+}
+
+/**
+ * Appends to the exact regular-file inode that was observed. O_APPEND never
+ * overwrites existing bytes. If an editor atomically replaces the pathname,
+ * the append lands on the old open inode and the editor's replacement remains
+ * untouched; the identity check then reports the conflict.
+ */
+export async function appendTextIfUnchanged(
+  filePath: string,
+  expectedContent: string,
+  appendedContent: string,
+  boundaryPath: string,
+  options: ConditionalAppendOptions = {},
+): Promise<void> {
+  await assertSafePath(boundaryPath, filePath);
+  const initialInfo = await lstat(filePath);
+  if (initialInfo.isSymbolicLink() || !initialInfo.isFile()) {
+    throw new Error(`Conditional append requires a regular file: ${filePath}`);
+  }
+
+  const handle = await open(filePath, "a+");
+  try {
+    const openedInfo = await handle.stat();
+    if (
+      !openedInfo.isFile()
+      || openedInfo.dev !== initialInfo.dev
+      || openedInfo.ino !== initialInfo.ino
+    ) {
+      throw new Error(`File changed before conditional append: ${filePath}`);
+    }
+    const openedContent = await handle.readFile({ encoding: "utf8" });
+    if (openedContent !== expectedContent) {
+      throw new Error(`File changed before conditional append: ${filePath}`);
+    }
+    await options.beforeAppend?.();
+    await handle.appendFile(appendedContent, { encoding: "utf8" });
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+
+  await assertSafePath(boundaryPath, filePath);
+  const [confirmedContent, confirmedInfo] = await Promise.all([
+    readFile(filePath, "utf8"),
+    lstat(filePath),
+  ]);
+  if (
+    confirmedInfo.isSymbolicLink()
+    || !confirmedInfo.isFile()
+    || confirmedInfo.dev !== initialInfo.dev
+    || confirmedInfo.ino !== initialInfo.ino
+    || confirmedContent !== `${expectedContent}${appendedContent}`
+  ) {
+    throw new Error(`File changed during conditional append: ${filePath}`);
+  }
+}
+
 export async function writeJson(filePath: string, value: unknown, boundaryPath: string): Promise<void> {
   await atomicWrite(filePath, `${JSON.stringify(value, null, 2)}\n`, boundaryPath);
 }
@@ -136,8 +226,18 @@ export async function readJson(filePath: string): Promise<unknown> {
   return JSON.parse(await readFile(filePath, "utf8"));
 }
 
-export async function writeIfMissing(filePath: string, content: string, boundaryPath: string): Promise<void> {
-  if (!(await exists(filePath))) await atomicWrite(filePath, content, boundaryPath);
+export async function writeIfMissing(filePath: string, content: string, boundaryPath: string): Promise<boolean> {
+  await assertSafePath(boundaryPath, filePath);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await assertSafePath(boundaryPath, filePath);
+  try {
+    await writeFile(filePath, content, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    return true;
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? error.code : null;
+    if (code === "EEXIST") return false;
+    throw error;
+  }
 }
 
 export async function collectFiles(

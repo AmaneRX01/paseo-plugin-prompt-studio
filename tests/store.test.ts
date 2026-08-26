@@ -17,6 +17,10 @@ import Module from "node:module";
 import test from "node:test";
 import type { DraftDetail, DraftScope, DraftStatus, TagTreeNode } from "../src/shared/contracts.shared";
 import type { DispatchPaseo } from "../src/server/handlers.server";
+import {
+  appendTextIfUnchanged,
+  writeIfMissing,
+} from "../src/server/storage/filesystem.server";
 import type { PromptStudioStore as PromptStudioStoreType, ResolvedSourceProject } from "../src/server/store.server";
 
 const moduleInternals = Module as unknown as {
@@ -313,6 +317,79 @@ test("one Prompt Studio vault owns every Draft and keeps local links outside com
   const repeated = await store.ensureContainer(null);
   assert.equal(repeated.created, false);
   assert.equal(repeated.summary.id, ensured.summary.id);
+});
+
+test("vault AGENTS migration appends one managed access block without replacing user text", async (t) => {
+  const { root, store } = await makeStore(t);
+  await store.ensureContainer(null);
+  const agentsPath = path.join(root, "AGENTS.md");
+  await writeFile(agentsPath, "# My vault notes\n\nKeep this custom instruction.\n", "utf8");
+
+  const reopened = new PromptStudioStore(root);
+  await reopened.ensureContainer(null);
+  const migrated = await readFile(agentsPath, "utf8");
+  assert.match(migrated, /Keep this custom instruction/);
+  assert.match(migrated, /must never read, search, enumerate, summarize, or modify this vault/i);
+  assert.equal(migrated.match(/prompt-studio:managed-agent-access:start/g)?.length, 1);
+
+  await new PromptStudioStore(root).ensureContainer(null);
+  const stable = await readFile(agentsPath, "utf8");
+  assert.equal(stable, migrated);
+});
+
+test("vault bootstrap publishes AGENTS candidates with exclusive create semantics", async (t) => {
+  const { root } = await makeStore(t);
+  const agentsPath = path.join(root, "exclusive-AGENTS.md");
+  const [firstCreated, secondCreated] = await Promise.all([
+    writeIfMissing(agentsPath, "first candidate\n", root),
+    writeIfMissing(agentsPath, "second candidate\n", root),
+  ]);
+
+  assert.equal(Number(firstCreated) + Number(secondCreated), 1);
+  assert.equal(
+    await readFile(agentsPath, "utf8"),
+    firstCreated ? "first candidate\n" : "second candidate\n",
+  );
+});
+
+test("managed AGENTS append preserves an editor write injected at the commit boundary", async (t) => {
+  const { root } = await makeStore(t);
+  const agentsPath = path.join(root, "append-AGENTS.md");
+  const observed = "# Original user instructions\n";
+  const external = "# External editor replacement\n";
+  const managedSuffix = "\nmanaged block\n";
+  await writeFile(agentsPath, observed, "utf8");
+
+  await assert.rejects(
+    appendTextIfUnchanged(agentsPath, observed, managedSuffix, root, {
+      beforeAppend: () => writeFile(agentsPath, external, "utf8"),
+    }),
+    /changed during conditional append/i,
+  );
+  assert.equal(await readFile(agentsPath, "utf8"), `${external}${managedSuffix}`);
+});
+
+test("vault leaves an outdated managed AGENTS block byte-for-byte unchanged when CAS is unavailable", async (t) => {
+  const { root, store } = await makeStore(t);
+  await store.ensureContainer(null);
+  const agentsPath = path.join(root, "AGENTS.md");
+  const outdated = `# User instructions
+
+<!-- prompt-studio:managed-agent-access:start -->
+## Previous managed rule
+
+Keep the old rule until replacement can be committed safely.
+<!-- prompt-studio:managed-agent-access:end -->
+
+User-authored tail must remain.
+`;
+  await writeFile(agentsPath, outdated, "utf8");
+
+  await assert.rejects(
+    new PromptStudioStore(root).ensureContainer(null),
+    /managed block cannot be replaced safely.*compare-and-swap replacement is unavailable.*left unchanged/i,
+  );
+  assert.equal(await readFile(agentsPath, "utf8"), outdated);
 });
 
 test("project links share the one vault registration and remain outside the portable manifest", async (t) => {
@@ -2060,7 +2137,8 @@ test("draft lifecycle creates a checkpoint on ready and restores the pre-archive
 
   const ready = await transitionTo(store, draft.summary.id, "ready");
   assert.equal(ready.summary.status, "ready");
-  assert.equal(ready.summary.schemaVersion, 4);
+  assert.equal(ready.summary.schemaVersion, 5);
+  assert.deepEqual(ready.summary.contentOrigin, { kind: "manual" });
   const readyCheckpoints = ready.checkpoints.filter((checkpoint) => checkpoint.reason === "ready");
   assert.equal(readyCheckpoints.length, 1);
   assert.equal(readyCheckpoints[0].version, ready.summary.version);
@@ -2159,7 +2237,110 @@ test("editing a ready draft returns it to draft for autosave, external edits, an
   assert.equal(restored.draft.summary.status, "draft");
 });
 
-test("schema-v2 archived metadata reads as v4 and naturally upgrades on restore", async (t) => {
+test("generated revisions create an undo checkpoint and persist/reset body provenance", async (t) => {
+  const { store, draft } = await createGlobalDraft(t, "Generate me", "original body");
+  const ready = await markReady(store, draft.summary.id);
+  const generationId = "gn_111111111111111111111111";
+  const applied = await store.applyGenerationRevision({
+    draftId: draft.summary.id,
+    generationId,
+    task: "related",
+    markdown: "optimized body",
+    expectedVersion: ready.summary.version,
+    expectedHash: ready.summary.contentHash,
+    agentId: "agt_generated",
+    provider: "codex",
+    model: "gpt-test",
+    counts: {
+      eligibleOtherPromptCount: 3,
+      includedOtherPromptCount: 2,
+      eligibleReferenceVersionCount: 4,
+      includedReferenceVersionCount: 3,
+      eligibleTargetHistoryVersionCount: 2,
+      includedTargetHistoryVersionCount: 1,
+      truncated: true,
+      estimatedInputTokens: 400,
+      inputTokenBudget: 500,
+    },
+  });
+  assert.equal(applied.status, "applied");
+  if (applied.status !== "applied") return;
+  assert.equal(applied.draft.markdown, "optimized body");
+  assert.equal(applied.draft.summary.status, "draft");
+  assert.deepEqual(applied.draft.summary.contentOrigin, {
+    kind: "generated",
+    task: "related",
+    generationId,
+    at: applied.draft.summary.updatedAt,
+    agentId: "agt_generated",
+    provider: "codex",
+    model: "gpt-test",
+    includedPromptCount: 2,
+    includedVersionCount: 4,
+  });
+  const checkpoint = await store.getCheckpoint(draft.summary.id, applied.checkpointId);
+  assert.equal(checkpoint.reason, "before-generation");
+  assert.equal(checkpoint.markdown, "original body");
+  assert.ok(applied.draft.events.some((event) => event.type === "generation.applied"
+    && event.details.generationId === generationId));
+
+  const titleOnly = await store.autosaveDraft({
+    draftId: draft.summary.id,
+    title: "Renamed generated prompt",
+    markdown: applied.draft.markdown,
+    expectedVersion: applied.draft.summary.version,
+    expectedHash: applied.draft.summary.contentHash,
+  });
+  assert.equal(titleOnly.summary.contentOrigin.kind, "generated");
+  const manualBody = await store.autosaveDraft({
+    draftId: draft.summary.id,
+    title: titleOnly.summary.title,
+    markdown: "manually edited body",
+    expectedVersion: titleOnly.summary.version,
+    expectedHash: titleOnly.summary.contentHash,
+  });
+  assert.deepEqual(manualBody.summary.contentOrigin, { kind: "manual" });
+});
+
+test("a generated response becomes a conflict candidate instead of overwriting a newer revision", async (t) => {
+  const { store, draft } = await createGlobalDraft(t, "Concurrent", "base body");
+  const newer = await store.autosaveDraft({
+    draftId: draft.summary.id,
+    title: draft.summary.title,
+    markdown: "newer body",
+    expectedVersion: draft.summary.version,
+    expectedHash: draft.summary.contentHash,
+  });
+  const result = await store.applyGenerationRevision({
+    draftId: draft.summary.id,
+    generationId: "gn_222222222222222222222222",
+    task: "format",
+    markdown: "stale generated body",
+    expectedVersion: draft.summary.version,
+    expectedHash: draft.summary.contentHash,
+    agentId: "agt_conflict",
+    provider: "kimi",
+    model: "k-test",
+    counts: {
+      eligibleOtherPromptCount: 0,
+      includedOtherPromptCount: 0,
+      eligibleReferenceVersionCount: 0,
+      includedReferenceVersionCount: 0,
+      eligibleTargetHistoryVersionCount: 0,
+      includedTargetHistoryVersionCount: 0,
+      truncated: false,
+      estimatedInputTokens: 100,
+      inputTokenBudget: 1_000,
+    },
+  });
+  assert.equal(result.status, "conflict");
+  assert.equal(result.draft.markdown, "newer body");
+  assert.equal(result.draft.summary.version, newer.summary.version);
+  assert.deepEqual(result.draft.summary.contentOrigin, { kind: "manual" });
+  assert.ok(result.draft.events.some((event) => event.type === "generation.conflict"));
+});
+
+test("schema-v2 archived metadata reads as v5 and naturally upgrades on restore", async (t) => {
   const { root, store, draft } = await createGlobalDraft(t, "Legacy lifecycle", "legacy body");
   const containerRoot = await store.getContainerRoot("ct_inbox");
   const metaPath = path.join(draftPath(containerRoot, draft.summary.id), "meta.json");
@@ -2172,14 +2353,15 @@ test("schema-v2 archived metadata reads as v4 and naturally upgrades on restore"
 
   const reopenedStore = new PromptStudioStore(root);
   const reopened = await reopenedStore.getDraft(draft.summary.id);
-  assert.equal(reopened.summary.schemaVersion, 4);
+  assert.equal(reopened.summary.schemaVersion, 5);
+  assert.deepEqual(reopened.summary.contentOrigin, { kind: "manual" });
   assert.equal(reopened.summary.status, "archived");
   assert.equal(reopened.summary.archivedFromStatus, "draft");
 
   const restored = await transitionTo(reopenedStore, draft.summary.id, "draft");
   assert.equal(restored.summary.status, "draft");
   const upgraded = JSON.parse(await readFile(metaPath, "utf8")) as Record<string, unknown>;
-  assert.equal(upgraded.schemaVersion, 4);
+  assert.equal(upgraded.schemaVersion, 5);
   assert.equal(upgraded.archivedFromStatus, null);
 });
 
@@ -2211,8 +2393,8 @@ test("schema-v3 starred metadata migrates to ready without rewriting on read", a
 
   await transitionTo(reopenedStore, draft.summary.id, "draft");
   await transitionTo(reopenedStore, archivedDraft.summary.id, "ready");
-  assert.equal((JSON.parse(await readFile(activeMetaPath, "utf8")) as { schemaVersion: number }).schemaVersion, 4);
-  assert.equal((JSON.parse(await readFile(archivedMetaPath, "utf8")) as { schemaVersion: number }).schemaVersion, 4);
+  assert.equal((JSON.parse(await readFile(activeMetaPath, "utf8")) as { schemaVersion: number }).schemaVersion, 5);
+  assert.equal((JSON.parse(await readFile(archivedMetaPath, "utf8")) as { schemaVersion: number }).schemaVersion, 5);
 });
 
 test("only ready drafts are sendable and status filtering has no draft star state", async (t) => {

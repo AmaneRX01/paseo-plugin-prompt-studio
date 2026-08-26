@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import {
   lstat,
   mkdir,
-  open,
   readFile,
   realpath,
   readdir,
@@ -12,6 +11,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 import {
+  MAX_DRAFT_MARKDOWN_LENGTH,
   checkpointSchema,
   dispatchSchema,
   draftDetailSchema,
@@ -50,6 +50,12 @@ import {
   tagKey,
   tagMatchesPath,
 } from "../shared/tags.shared";
+import type {
+  GenerationContextCounts,
+  GenerationJob,
+  GenerationJobRecord,
+  GenerationTask,
+} from "../shared/generation.shared";
 import {
   tagMutationJournalSchema,
   type TagMutationJournal,
@@ -72,7 +78,6 @@ import {
   isWithinPath,
   normalizePath,
   preview,
-  processIsAlive,
   readJson,
   shortId,
   writeJson,
@@ -82,11 +87,17 @@ import {
   DRAFT_META_NAME,
   deleteJournalSchema,
   draftMetaSchema,
+  generationApplyJournalSchema,
   type DeleteJournal,
   type DraftMeta,
+  type GenerationApplyJournal,
   type Manifest,
   type Placement,
 } from "./storage/model.server";
+import {
+  acquireCrossProcessFileLock,
+  GenerationRepository,
+} from "./storage/generations.server";
 import {
   VaultRepository,
   type ResolvedSourceProject as VaultResolvedSourceProject,
@@ -94,8 +105,6 @@ import {
 } from "./storage/vault.server";
 
 const CHECKPOINT_INTERVAL_MS = 5 * 60 * 1_000;
-const LOCK_STALE_MS = 30 * 60 * 1_000;
-
 export type ResolvedSourceProject = VaultResolvedSourceProject;
 
 export interface EnsureContainerResult {
@@ -139,6 +148,29 @@ export interface DeleteDraftInput {
   expectedVersion: number;
   expectedHash: string;
 }
+
+export interface ApplyGenerationRevisionInput {
+  draftId: DraftId;
+  generationId: string;
+  task: GenerationTask;
+  markdown: string;
+  expectedVersion: number;
+  expectedHash: string;
+  agentId: string;
+  provider: string;
+  model: string;
+  counts: GenerationContextCounts;
+}
+
+export interface PrepareGenerationJobInput {
+  record: GenerationJobRecord;
+  requestMarkdown: string;
+  expectedProjectId: string;
+}
+
+export type ApplyGenerationRevisionResult =
+  | { status: "applied"; draft: DraftDetail; checkpointId: string }
+  | { status: "conflict"; draft: DraftDetail };
 
 export interface RestoreCheckpointInput {
   draftId: DraftId;
@@ -251,6 +283,18 @@ function withoutPendingTagMutation(meta: DraftMeta): DraftMeta {
   return clean;
 }
 
+function generationRevisionMetadata(meta: DraftMeta): Omit<DraftMeta, "tags" | "pendingTagMutation"> {
+  const { tags: _tags, pendingTagMutation: _pendingTagMutation, ...revision } = meta;
+  return revision;
+}
+
+function generationNextMetaWithCurrentTags(next: DraftMeta, current: DraftMeta): DraftMeta {
+  const merged: DraftMeta = { ...next, tags: current.tags };
+  if (current.pendingTagMutation) merged.pendingTagMutation = current.pendingTagMutation;
+  else delete merged.pendingTagMutation;
+  return merged;
+}
+
 function sameScope(left: DraftScope, right: DraftScope): boolean {
   return left.projectId === right.projectId;
 }
@@ -270,6 +314,7 @@ export class PromptStudioStore {
   readonly eventsPath: string;
   readonly transactionsPath: string;
   private readonly vault: VaultRepository;
+  private readonly generations: GenerationRepository;
   private readonly locks = new Map<string, Promise<void>>();
   private initialization: Promise<void> | null = null;
   private catalogCache: CatalogResult | null = null;
@@ -284,6 +329,7 @@ export class PromptStudioStore {
     this.now = options.now ?? (() => new Date());
     this.entropy = options.entropy ?? randomUUID;
     this.vault = new VaultRepository(this.rootPath, this.now);
+    this.generations = new GenerationRepository(this.rootPath, { now: this.now });
   }
 
   private timestamp(): string {
@@ -314,6 +360,7 @@ export class PromptStudioStore {
     const releaseRecovery = await this.acquireFileLock("vault-recovery");
     try {
       await this.vault.initialize();
+      await this.recoverGenerationApplyJournals();
       const releaseTags = await this.acquireFileLock("tags-global");
       try {
         await this.recoverDeleteJournals();
@@ -323,6 +370,13 @@ export class PromptStudioStore {
       }
     } finally {
       await releaseRecovery();
+    }
+  }
+
+  private async ensureNoUnresolvedGeneration(draftId: DraftId, action: string): Promise<void> {
+    const unresolved = await this.generations.findUnresolved(draftId);
+    if (unresolved) {
+      throw new Error(`Cannot ${action} while generation ${unresolved.id} is ${unresolved.status}; apply, discard, or abandon it first`);
     }
   }
 
@@ -462,45 +516,11 @@ export class PromptStudioStore {
   }
 
   private async acquireFileLock(key: string): Promise<() => Promise<void>> {
-    const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, "_");
-    const locksPath = path.join(this.rootPath, ".locks");
-    await mkdir(locksPath, { recursive: true });
-    await assertSafePath(this.rootPath, locksPath);
-    const lockPath = path.join(locksPath, `${safeKey}.lock`);
-    for (let attempt = 0; attempt < 50; attempt += 1) {
-      try {
-        const handle = await open(lockPath, "wx", 0o600);
-        await handle.writeFile(`${JSON.stringify({ pid: process.pid, at: this.timestamp() })}\n`, "utf8");
-        await handle.close();
-        return async () => {
-          await assertSafePath(this.rootPath, lockPath);
-          await rm(lockPath, { force: true });
-        };
-      } catch (error) {
-        const code = error && typeof error === "object" && "code" in error ? error.code : null;
-        if (code !== "EEXIST") throw error;
-        const info = await lstat(lockPath);
-        if (info.isSymbolicLink()) throw new Error(`Unsafe lock path: ${lockPath}`);
-        let ownerPid: number | null = null;
-        try {
-          await assertSafePath(this.rootPath, lockPath);
-          const payload = JSON.parse(await readFile(lockPath, "utf8")) as { pid?: unknown };
-          ownerPid = typeof payload.pid === "number" ? payload.pid : null;
-        } catch {
-          ownerPid = null;
-        }
-        if (ownerPid !== null && !processIsAlive(ownerPid)) {
-          await rm(lockPath, { force: true });
-          continue;
-        }
-        if (ownerPid === null && Date.now() - info.mtimeMs > LOCK_STALE_MS) {
-          await rm(lockPath, { force: true });
-          continue;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 20 + attempt * 4));
-      }
-    }
-    throw new Error(`Prompt Studio resource is busy in another plugin process: ${key}`);
+    return acquireCrossProcessFileLock(
+      this.rootPath,
+      key,
+      `Prompt Studio resource is busy in another plugin process: ${key}`,
+    );
   }
 
   private async withLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
@@ -614,11 +634,12 @@ export class PromptStudioStore {
   async isManagedPath(candidatePath: string): Promise<boolean> {
     const boundary = normalizePath(this.rootPath);
     const candidate = normalizePath(candidatePath);
-    if (isWithinPath(boundary, candidate)) return true;
+    if (isWithinPath(boundary, candidate) || isWithinPath(candidate, boundary)) return true;
     try {
       const canonicalBoundary = normalizePath(await realpath(this.rootPath));
       const canonicalCandidate = normalizePath(await realpath(candidatePath));
-      return isWithinPath(canonicalBoundary, canonicalCandidate);
+      return isWithinPath(canonicalBoundary, canonicalCandidate)
+        || isWithinPath(canonicalCandidate, canonicalBoundary);
     } catch {
       return false;
     }
@@ -722,6 +743,86 @@ export class PromptStudioStore {
     }
     events.sort((left, right) => right.at.localeCompare(left.at));
     return { events, warnings };
+  }
+
+  private async writeGenerationEventOnceUnlocked(
+    containerRoot: string,
+    draftRoot: string,
+    draftId: DraftId,
+    input: {
+      type: "generation.started" | "generation.applied" | "generation.conflict" | "generation.failed" | "generation.discarded";
+      containerId: ContainerId;
+      summary: string;
+      generationId: string;
+      details?: Record<string, unknown>;
+    },
+  ): Promise<StudioEvent> {
+    const existing = (await this.readEvents(draftRoot)).events.find(
+      (event) => event.type === input.type && event.details.generationId === input.generationId,
+    );
+    if (existing) return existing;
+    return this.writeDraftEvent(containerRoot, draftId, {
+      type: input.type,
+      containerId: input.containerId,
+      summary: input.summary,
+      actor: "plugin",
+      details: { generationId: input.generationId, ...(input.details ?? {}) },
+    });
+  }
+
+  async recordGenerationEvent(input: {
+    draftId: DraftId;
+    generationId: string;
+    type: "generation.started" | "generation.conflict" | "generation.failed" | "generation.discarded";
+    summary: string;
+    details?: Record<string, unknown>;
+  }): Promise<StudioEvent> {
+    return this.withLock(input.draftId, async () => {
+      const { containerRoot, draftRoot } = await this.locateDraft(input.draftId);
+      const meta = await this.readDraftMeta(draftRoot, containerRoot);
+      const event = await this.writeGenerationEventOnceUnlocked(containerRoot, draftRoot, input.draftId, {
+        ...input,
+        containerId: meta.containerId,
+      });
+      await this.updateCachedDraft(await this.loadDraftUnlocked(input.draftId, false), false);
+      return event;
+    });
+  }
+
+  async prepareGenerationJob(input: PrepareGenerationJobInput): Promise<GenerationJob> {
+    return this.withLock(input.record.draftId, async () => {
+      const { containerRoot, draftRoot } = await this.locateDraft(input.record.draftId);
+      let meta = await this.readDraftMeta(draftRoot, containerRoot);
+      const reconciled = await this.reconcileExternalEditUnlocked(containerRoot, draftRoot, meta);
+      meta = reconciled.meta;
+      if (meta.version !== input.record.baseVersion || meta.contentHash !== input.record.baseHash) {
+        throw new Error(
+          `Draft changed while generation context was being prepared (current version ${meta.version})`,
+        );
+      }
+      if (meta.status === "archived") {
+        throw new Error("Restore the archived draft before running generation");
+      }
+      if (meta.scope.projectId !== input.expectedProjectId) {
+        throw new Error("Draft Project changed while generation context was being prepared");
+      }
+      const job = await this.generations.create(input.record, input.requestMarkdown);
+      await this.writeGenerationEventOnceUnlocked(containerRoot, draftRoot, input.record.draftId, {
+        type: "generation.started",
+        containerId: meta.containerId,
+        summary: `${job.task === "format" ? "Started formatting" : "Started optimizing"} ${meta.title} with an Agent`,
+        generationId: job.id,
+        details: {
+          task: job.task,
+          provider: job.configuration.provider,
+          model: job.configuration.model,
+          counts: job.counts,
+          allowProjectRead: job.allowProjectRead,
+        },
+      });
+      await this.updateCachedDraft(await this.loadDraftUnlocked(input.record.draftId, false), false);
+      return job;
+    });
   }
 
   private draftRoot(containerRoot: string, draftId: DraftId): string {
@@ -842,6 +943,7 @@ export class PromptStudioStore {
       version: nextVersion,
       contentHash: observedHash,
       updatedAt: now,
+      contentOrigin: { kind: "manual" },
     };
     const checkpoint = await this.createCheckpointUnlocked(containerRoot, draftRoot, nextMeta, markdown, "external-edit");
     nextMeta = checkpoint.meta;
@@ -887,7 +989,7 @@ export class PromptStudioStore {
     const events = await this.readEvents(draftRoot);
     return draftDetailSchema.parse({
       summary: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         id: meta.id,
         containerId: meta.containerId,
         title: meta.title,
@@ -903,6 +1005,7 @@ export class PromptStudioStore {
         lastCheckpointAt: meta.lastCheckpointAt,
         snapshotCount: snapshots.values.length,
         dispatchCount: dispatches.values.length,
+        contentOrigin: meta.contentOrigin,
         preview: preview(markdown),
       },
       markdown,
@@ -926,7 +1029,7 @@ export class PromptStudioStore {
       countFiles(path.join(draftRoot, "dispatches"), /^ds_[a-f0-9]{24}\.json$/),
     ]);
     return {
-      schemaVersion: 4,
+      schemaVersion: 5,
       id: meta.id,
       containerId: meta.containerId,
       title: meta.title,
@@ -942,6 +1045,7 @@ export class PromptStudioStore {
       lastCheckpointAt: meta.lastCheckpointAt,
       snapshotCount,
       dispatchCount,
+      contentOrigin: meta.contentOrigin,
       preview: preview(markdown),
     };
   }
@@ -976,7 +1080,7 @@ export class PromptStudioStore {
       await assertSafePath(containerRoot, draftRoot);
       const now = this.timestamp();
       const meta: DraftMeta = {
-        schemaVersion: 4,
+        schemaVersion: 5,
         id: draftId,
         containerId,
         title: title.trim() || "Untitled",
@@ -990,6 +1094,7 @@ export class PromptStudioStore {
         archivedAt: null,
         archivedFromStatus: null,
         lastCheckpointAt: null,
+        contentOrigin: { kind: "manual" },
       };
       await atomicWrite(path.join(draftRoot, DRAFT_MARKDOWN_NAME), markdown, containerRoot);
       await writeJson(path.join(draftRoot, DRAFT_META_NAME), meta, containerRoot);
@@ -1011,6 +1116,7 @@ export class PromptStudioStore {
     checkpointCreated: boolean;
   }> {
     return this.withLock(input.draftId, async () => {
+      await this.ensureNoUnresolvedGeneration(input.draftId, "save this draft");
       const { containerRoot, draftRoot } = await this.locateDraft(input.draftId);
       let meta = await this.readDraftMeta(draftRoot, containerRoot);
       const reconciled = await this.reconcileExternalEditUnlocked(containerRoot, draftRoot, meta);
@@ -1049,6 +1155,7 @@ export class PromptStudioStore {
         version: meta.version + 1,
         contentHash: nextHash,
         updatedAt: now,
+        contentOrigin: changedFields.includes("markdown") ? { kind: "manual" } : meta.contentOrigin,
       };
       await atomicWrite(path.join(draftRoot, DRAFT_MARKDOWN_NAME), input.markdown, containerRoot);
       await writeJson(path.join(draftRoot, DRAFT_META_NAME), next, containerRoot);
@@ -1209,6 +1316,7 @@ export class PromptStudioStore {
     targetStatus: DraftStatus,
     expected?: { version: number; hash: string },
   ): Promise<{ draft: DraftDetail; changed: boolean }> {
+    await this.ensureNoUnresolvedGeneration(draftId, "change draft status");
     const { containerRoot, draftRoot } = await this.locateDraft(draftId);
     const reconciled = await this.reconcileExternalEditUnlocked(
       containerRoot,
@@ -1278,6 +1386,221 @@ export class PromptStudioStore {
 
   private deleteJournalPath(draftId: DraftId): string {
     return path.join(this.transactionsPath, `delete-${draftId}.json`);
+  }
+
+  private generationApplyJournalPath(draftId: DraftId, generationId: string): string {
+    return path.join(this.transactionsPath, `generation-apply-${draftId}-${generationId}.json`);
+  }
+
+  private async writeCheckpointEventOnceUnlocked(
+    containerRoot: string,
+    draftRoot: string,
+    meta: DraftMeta,
+    checkpoint: Checkpoint,
+  ): Promise<void> {
+    const existsAlready = (await this.readEvents(draftRoot)).events.some(
+      (event) => event.type === "checkpoint.created"
+        && event.details.checkpointId === checkpoint.id,
+    );
+    if (existsAlready) return;
+    await this.writeDraftEvent(containerRoot, meta.id, {
+      type: "checkpoint.created",
+      containerId: meta.containerId,
+      summary: `Created ${checkpoint.reason} checkpoint`,
+      actor: "plugin",
+      details: {
+        checkpointId: checkpoint.id,
+        version: checkpoint.version,
+        contentHash: checkpoint.contentHash,
+      },
+    });
+  }
+
+  private async completeGenerationApplyJournalUnlocked(
+    journal: GenerationApplyJournal,
+    journalPath: string,
+  ): Promise<{ job: GenerationJob; draft: DraftDetail }> {
+    const { containerRoot, draftRoot } = await this.locateDraft(journal.draftId);
+    let job = await this.generations.get(journal.draftId, journal.generationId);
+    if (!job.responseMarkdown || job.responseHash !== journal.responseHash) {
+      throw new Error(`Generation apply journal response lineage is incomplete: ${journal.generationId}`);
+    }
+    if (hash(job.responseMarkdown) !== journal.responseHash) {
+      throw new Error(`Generation apply journal response hash mismatch: ${journal.generationId}`);
+    }
+
+    const currentMeta = await this.readDraftMeta(draftRoot, containerRoot);
+    const markdownPath = path.join(draftRoot, DRAFT_MARKDOWN_NAME);
+    await assertSafePath(containerRoot, markdownPath);
+    const currentMarkdown = await readFile(markdownPath, "utf8");
+    const currentRevision = JSON.stringify(generationRevisionMetadata(currentMeta));
+    const metaIsBefore = currentRevision === JSON.stringify(generationRevisionMetadata(journal.beforeMeta));
+    const metaIsNext = currentRevision === JSON.stringify(generationRevisionMetadata(journal.nextMeta));
+    const nextMeta = generationNextMetaWithCurrentTags(journal.nextMeta, currentMeta);
+    const bodyIsBefore = currentMarkdown === journal.beforeMarkdown;
+    const bodyIsNext = currentMarkdown === job.responseMarkdown;
+
+    if (["failed", "discarded", "abandoned"].includes(job.status)) {
+      await assertSafePath(this.rootPath, journalPath);
+      await rm(journalPath, { force: true });
+      return { job, draft: await this.loadDraftUnlocked(journal.draftId, false) };
+    }
+    if ((!metaIsBefore && !metaIsNext) || (!bodyIsBefore && !bodyIsNext)) {
+      if (job.status === "applied") {
+        throw new Error(`Applied generation ${journal.generationId} no longer matches its canonical Draft`);
+      }
+      if (job.status !== "result-ready" && job.status !== "conflict") {
+        throw new Error(`Cannot recover generation apply while job is ${job.status}`);
+      }
+      // If the generated body was written before the interrupted transaction,
+      // roll it back before exposing the response as a conflict candidate. It
+      // must never become canonical without generated provenance merely because
+      // unrelated metadata changed during recovery.
+      if (bodyIsNext && !bodyIsBefore) {
+        await atomicWrite(markdownPath, journal.beforeMarkdown, containerRoot);
+      }
+      const reconciledConflict = await this.reconcileExternalEditUnlocked(
+        containerRoot,
+        draftRoot,
+        currentMeta,
+      );
+      job = await this.generations.markConflict(
+        journal.draftId,
+        journal.generationId,
+        "The Draft changed while a generated response was being committed.",
+      );
+      await this.writeGenerationEventOnceUnlocked(containerRoot, draftRoot, journal.draftId, {
+        type: "generation.conflict",
+        containerId: reconciledConflict.meta.containerId,
+        summary: `Saved generated response as a conflict candidate for ${reconciledConflict.meta.title}`,
+        generationId: journal.generationId,
+        details: {
+          expectedVersion: journal.beforeMeta.version,
+          expectedHash: journal.beforeMeta.contentHash,
+          currentVersion: reconciledConflict.meta.version,
+          currentHash: reconciledConflict.meta.contentHash,
+          reason: "interrupted-apply-external-change",
+        },
+      });
+      await assertSafePath(this.rootPath, journalPath);
+      await rm(journalPath, { force: true });
+      const draft = await this.loadDraftUnlocked(journal.draftId, false);
+      await this.updateCachedDraft(draft, false);
+      return { job, draft };
+    }
+
+    if (job.status !== "result-ready" && job.status !== "conflict" && job.status !== "applied") {
+      throw new Error(`Cannot complete generation apply while job is ${job.status}`);
+    }
+    const checkpointPath = path.join(
+      draftRoot,
+      "checkpoints",
+      `${compactTimestamp(journal.checkpoint.at)}-${journal.checkpoint.id}.md`,
+    );
+    const expectedCheckpoint = checkpointDocument(journal.checkpoint, journal.beforeMarkdown);
+    if (await exists(checkpointPath)) {
+      await assertSafePath(containerRoot, checkpointPath);
+      if (await readFile(checkpointPath, "utf8") !== expectedCheckpoint) {
+        throw new Error(`Generation undo checkpoint conflicts with existing content: ${journal.checkpoint.id}`);
+      }
+    } else {
+      await atomicWrite(checkpointPath, expectedCheckpoint, containerRoot);
+    }
+    await this.writeCheckpointEventOnceUnlocked(
+      containerRoot,
+      draftRoot,
+      journal.beforeMeta,
+      journal.checkpoint,
+    );
+    if (!bodyIsNext) await atomicWrite(markdownPath, job.responseMarkdown, containerRoot);
+    if (JSON.stringify(currentMeta) !== JSON.stringify(nextMeta)) {
+      await writeJson(path.join(draftRoot, DRAFT_META_NAME), nextMeta, containerRoot);
+    }
+
+    const jobAlreadyApplied = job.status === "applied";
+    if (jobAlreadyApplied) {
+      if (
+        job.checkpointId !== journal.checkpoint.id
+        || job.appliedVersion !== nextMeta.version
+        || job.appliedHash !== nextMeta.contentHash
+      ) {
+        throw new Error(`Applied generation provenance mismatch: ${journal.generationId}`);
+      }
+    }
+    await this.writeGenerationEventOnceUnlocked(containerRoot, draftRoot, journal.draftId, {
+      type: "generation.applied",
+      containerId: nextMeta.containerId,
+      summary: `${job.task === "format" ? "Formatted" : "Optimized"} ${nextMeta.title} with an Agent`,
+      generationId: journal.generationId,
+      details: {
+        agentId: job.agentId,
+        provider: job.configuration.provider,
+        model: job.configuration.model,
+        task: job.task,
+        checkpointId: journal.checkpoint.id,
+        fromVersion: journal.beforeMeta.version,
+        toVersion: nextMeta.version,
+        fromHash: journal.beforeMeta.contentHash,
+        toHash: nextMeta.contentHash,
+        counts: job.counts,
+        ...(journal.beforeMeta.status === "ready" ? { fromStatus: "ready", toStatus: "draft" } : {}),
+      },
+    });
+    if (journal.beforeMeta.status === "ready") {
+      const statusAlreadyRecorded = (await this.readEvents(draftRoot)).events.some(
+        (event) => event.type === "draft.status-changed"
+          && event.details.reason === "content-generated"
+          && event.details.generationId === journal.generationId,
+      );
+      if (!statusAlreadyRecorded) {
+        await this.writeDraftEvent(containerRoot, journal.draftId, {
+          type: "draft.status-changed",
+          containerId: nextMeta.containerId,
+          summary: `Changed ${nextMeta.title} from ready to draft after generated content was applied`,
+          actor: "plugin",
+          details: {
+            fromStatus: "ready",
+            toStatus: "draft",
+            reason: "content-generated",
+            generationId: journal.generationId,
+          },
+        });
+      }
+    }
+    await assertSafePath(this.rootPath, journalPath);
+    await rm(journalPath, { force: true });
+    if (!jobAlreadyApplied) {
+      job = await this.generations.markApplied(journal.draftId, journal.generationId, {
+        checkpointId: journal.checkpoint.id,
+        appliedVersion: nextMeta.version,
+        appliedHash: nextMeta.contentHash,
+      });
+    }
+    const draft = await this.loadDraftUnlocked(journal.draftId, false);
+    await this.updateCachedDraft(draft, false);
+    return { job, draft };
+  }
+
+  private async recoverGenerationApplyJournals(): Promise<void> {
+    if (!(await exists(this.transactionsPath))) return;
+    await assertSafePath(this.rootPath, this.transactionsPath);
+    for (const entry of await readdir(this.transactionsPath, { withFileTypes: true })) {
+      if (
+        !entry.isFile()
+        || entry.isSymbolicLink()
+        || !/^generation-apply-dr_[a-f0-9]{16}-gn_[a-f0-9]{24}\.json$/.test(entry.name)
+      ) continue;
+      const journalPath = path.join(this.transactionsPath, entry.name);
+      const journal = generationApplyJournalSchema.parse(await readJson(journalPath));
+      const releaseDraft = await this.acquireFileLock(journal.draftId);
+      try {
+        await this.completeGenerationApplyJournalUnlocked(journal, journalPath);
+      } catch (error) {
+        throw new Error(`Unable to recover ${entry.name}: ${formatError(error)}`);
+      } finally {
+        await releaseDraft();
+      }
+    }
   }
 
   private deleteQuarantinePath(draftId: DraftId): string {
@@ -1351,6 +1674,7 @@ export class PromptStudioStore {
       return this.withLock("tags-global", async () => {
         await this.recoverTagMutationJournals();
         return this.withLock(input.draftId, async () => {
+      await this.ensureNoUnresolvedGeneration(input.draftId, "permanently delete this draft");
       const { containerRoot, draftRoot } = await this.locateDraft(input.draftId);
       const reconciled = await this.reconcileExternalEditUnlocked(
         containerRoot,
@@ -1392,6 +1716,7 @@ export class PromptStudioStore {
 
   async moveDraftScope(draftId: DraftId, targetContainerId: ContainerId, scope: DraftScope): Promise<DraftDetail> {
     return this.withLock(draftId, async () => {
+      await this.ensureNoUnresolvedGeneration(draftId, "change draft Scope");
       const source = await this.locateDraft(draftId);
       let meta = await this.readDraftMeta(source.draftRoot, source.containerRoot);
       const reconciled = await this.reconcileExternalEditUnlocked(source.containerRoot, source.draftRoot, meta);
@@ -1435,6 +1760,7 @@ export class PromptStudioStore {
 
   async restoreCheckpoint(input: RestoreCheckpointInput): Promise<{ draft: DraftDetail; restored: boolean }> {
     return this.withLock(input.draftId, async () => {
+      await this.ensureNoUnresolvedGeneration(input.draftId, "restore a checkpoint");
       const { containerRoot, draftRoot } = await this.locateDraft(input.draftId);
       let meta = await this.readDraftMeta(draftRoot, containerRoot);
       const reconciled = await this.reconcileExternalEditUnlocked(containerRoot, draftRoot, meta);
@@ -1473,6 +1799,7 @@ export class PromptStudioStore {
         version: meta.version + 1,
         contentHash: target.contentHash,
         updatedAt: now,
+        contentOrigin: { kind: "manual" },
       };
       await atomicWrite(path.join(draftRoot, DRAFT_MARKDOWN_NAME), target.markdown, containerRoot);
       await writeJson(path.join(draftRoot, DRAFT_META_NAME), next, containerRoot);
@@ -1506,7 +1833,335 @@ export class PromptStudioStore {
     });
   }
 
+  private async applyGenerationRevisionUnlocked(
+    input: ApplyGenerationRevisionInput,
+  ): Promise<ApplyGenerationRevisionResult> {
+      const { containerRoot, draftRoot } = await this.locateDraft(input.draftId);
+      let meta = await this.readDraftMeta(draftRoot, containerRoot);
+      const reconciled = await this.reconcileExternalEditUnlocked(containerRoot, draftRoot, meta);
+      meta = reconciled.meta;
+
+      if (meta.contentOrigin.kind === "generated" && meta.contentOrigin.generationId === input.generationId) {
+        const event = (await this.readEvents(draftRoot)).events.find(
+          (candidate) => candidate.type === "generation.applied"
+            && candidate.details.generationId === input.generationId,
+        );
+        const checkpointId = typeof event?.details.checkpointId === "string" ? event.details.checkpointId : null;
+        if (!checkpointId) throw new Error(`Applied generation ${input.generationId} is missing checkpoint provenance`);
+        return {
+          status: "applied",
+          draft: await this.loadDraftUnlocked(input.draftId, false),
+          checkpointId,
+        };
+      }
+
+      if (meta.version !== input.expectedVersion || meta.contentHash !== input.expectedHash) {
+        await this.writeGenerationEventOnceUnlocked(containerRoot, draftRoot, input.draftId, {
+          type: "generation.conflict",
+          containerId: meta.containerId,
+          summary: `Saved generated response as a conflict candidate for ${meta.title}`,
+          generationId: input.generationId,
+          details: {
+            agentId: input.agentId,
+            expectedVersion: input.expectedVersion,
+            expectedHash: input.expectedHash,
+            currentVersion: meta.version,
+            currentHash: meta.contentHash,
+          },
+        });
+        const draft = await this.loadDraftUnlocked(input.draftId, false);
+        await this.updateCachedDraft(draft, false);
+        return { status: "conflict", draft };
+      }
+      if (meta.status === "archived") throw new Error("Restore the archived draft before applying generated content");
+
+      const before = await this.createCheckpointUnlocked(
+        containerRoot,
+        draftRoot,
+        meta,
+        reconciled.markdown,
+        input.task === "format" ? "before-format" : "before-generation",
+      );
+      meta = before.meta;
+      const now = this.timestamp();
+      const nextHash = hash(input.markdown);
+      const revertsReady = meta.status === "ready";
+      const next: DraftMeta = {
+        ...meta,
+        schemaVersion: 5,
+        status: revertsReady ? "draft" : meta.status,
+        version: meta.version + 1,
+        contentHash: nextHash,
+        updatedAt: now,
+        contentOrigin: {
+          kind: "generated",
+          task: input.task,
+          generationId: input.generationId,
+          at: now,
+          agentId: input.agentId,
+          provider: input.provider,
+          model: input.model,
+          includedPromptCount: input.counts.includedOtherPromptCount,
+          includedVersionCount:
+            input.counts.includedReferenceVersionCount + input.counts.includedTargetHistoryVersionCount,
+        },
+      };
+      await atomicWrite(path.join(draftRoot, DRAFT_MARKDOWN_NAME), input.markdown, containerRoot);
+      await writeJson(path.join(draftRoot, DRAFT_META_NAME), next, containerRoot);
+      await this.writeGenerationEventOnceUnlocked(containerRoot, draftRoot, input.draftId, {
+        type: "generation.applied",
+        containerId: next.containerId,
+        summary: `${input.task === "format" ? "Formatted" : "Optimized"} ${next.title} with an Agent`,
+        generationId: input.generationId,
+        details: {
+          agentId: input.agentId,
+          provider: input.provider,
+          model: input.model,
+          task: input.task,
+          checkpointId: before.checkpoint.id,
+          fromVersion: meta.version,
+          toVersion: next.version,
+          fromHash: meta.contentHash,
+          toHash: nextHash,
+          counts: input.counts,
+          ...(revertsReady ? { fromStatus: "ready", toStatus: "draft" } : {}),
+        },
+      });
+      if (revertsReady) {
+        await this.writeDraftEvent(containerRoot, input.draftId, {
+          type: "draft.status-changed",
+          containerId: next.containerId,
+          summary: `Changed ${next.title} from ready to draft after generated content was applied`,
+          actor: "plugin",
+          details: { fromStatus: "ready", toStatus: "draft", reason: "content-generated" },
+        });
+      }
+      const draft = await this.loadDraftUnlocked(input.draftId, false);
+      await this.updateCachedDraft(draft, false);
+      return { status: "applied", draft, checkpointId: before.checkpoint.id };
+  }
+
+  async applyGenerationRevision(input: ApplyGenerationRevisionInput): Promise<ApplyGenerationRevisionResult> {
+    if (!/^gn_[a-f0-9]{24}$/.test(input.generationId)) throw new Error("Invalid generation ID");
+    return this.withLock(input.draftId, async () => {
+      return this.applyGenerationRevisionUnlocked(input);
+    });
+  }
+
+  private async applyCapturedGenerationUnlocked(input: {
+    job: GenerationJob;
+    expectedVersion: number;
+    expectedHash: string;
+  }): Promise<{ job: GenerationJob; draft: DraftDetail }> {
+    const { job } = input;
+    if (!job.responseMarkdown || !job.responseHash || !job.agentId) {
+      throw new Error(`Generation ${job.id} has no captured response to apply`);
+    }
+    const journalPath = this.generationApplyJournalPath(job.draftId, job.id);
+    if (await exists(journalPath)) {
+      const existing = generationApplyJournalSchema.parse(await readJson(journalPath));
+      if (existing.draftId !== job.draftId || existing.generationId !== job.id) {
+        throw new Error(`Generation apply journal lineage mismatch: ${job.id}`);
+      }
+      return this.completeGenerationApplyJournalUnlocked(existing, journalPath);
+    }
+    const revision: ApplyGenerationRevisionInput = {
+      draftId: job.draftId,
+      generationId: job.id,
+      task: job.task,
+      markdown: job.responseMarkdown,
+      expectedVersion: input.expectedVersion,
+      expectedHash: input.expectedHash,
+      agentId: job.agentId,
+      provider: job.configuration.provider,
+      model: job.configuration.model,
+      counts: job.counts,
+    };
+    const { containerRoot, draftRoot } = await this.locateDraft(job.draftId);
+    let meta = await this.readDraftMeta(draftRoot, containerRoot);
+    const reconciled = await this.reconcileExternalEditUnlocked(containerRoot, draftRoot, meta);
+    meta = reconciled.meta;
+
+    if (meta.contentOrigin.kind === "generated" && meta.contentOrigin.generationId === job.id) {
+      const applied = await this.applyGenerationRevisionUnlocked(revision);
+      if (applied.status !== "applied") throw new Error(`Generation ${job.id} lost applied provenance`);
+      const appliedJob = job.status === "applied" ? job : await this.generations.markApplied(job.draftId, job.id, {
+        checkpointId: applied.checkpointId,
+        appliedVersion: applied.draft.summary.version,
+        appliedHash: applied.draft.summary.contentHash,
+      });
+      return { job: appliedJob, draft: applied.draft };
+    }
+    if (meta.version !== input.expectedVersion || meta.contentHash !== input.expectedHash) {
+      const conflict = await this.applyGenerationRevisionUnlocked(revision);
+      if (conflict.status !== "conflict") throw new Error(`Generation ${job.id} conflict was not retained`);
+      const conflictJob = await this.generations.markConflict(
+        job.draftId,
+        job.id,
+        "The Draft changed before the generated response could be applied.",
+      );
+      return { job: conflictJob, draft: conflict.draft };
+    }
+    if (meta.status === "archived") throw new Error("Restore the archived draft before applying generated content");
+
+    const at = this.timestamp();
+    const checkpoint: Checkpoint = checkpointSchema.parse({
+      id: this.id("cp"),
+      draftId: job.draftId,
+      reason: job.task === "format" ? "before-format" : "before-generation",
+      at,
+      version: meta.version,
+      contentHash: hash(reconciled.markdown),
+    });
+    const nextHash = hash(job.responseMarkdown);
+    const nextMeta: DraftMeta = {
+      ...meta,
+      schemaVersion: 5,
+      status: meta.status === "ready" ? "draft" : meta.status,
+      version: meta.version + 1,
+      contentHash: nextHash,
+      updatedAt: at,
+      lastCheckpointAt: at,
+      contentOrigin: {
+        kind: "generated",
+        task: job.task,
+        generationId: job.id,
+        at,
+        agentId: job.agentId,
+        provider: job.configuration.provider,
+        model: job.configuration.model,
+        includedPromptCount: job.counts.includedOtherPromptCount,
+        includedVersionCount:
+          job.counts.includedReferenceVersionCount + job.counts.includedTargetHistoryVersionCount,
+      },
+    };
+    const journal = generationApplyJournalSchema.parse({
+      schemaVersion: 1,
+      operation: "generation-apply",
+      draftId: job.draftId,
+      generationId: job.id,
+      checkpoint,
+      beforeMeta: meta,
+      beforeMarkdown: reconciled.markdown,
+      nextMeta,
+      responseHash: job.responseHash,
+      createdAt: at,
+    });
+    await writeJson(journalPath, journal, this.rootPath);
+    return this.completeGenerationApplyJournalUnlocked(journal, journalPath);
+  }
+
+  async commitGenerationResponse(input: {
+    draftId: DraftId;
+    generationId: string;
+    responseMarkdown: string;
+    agentId: string;
+  }): Promise<{ job: GenerationJob; draft: DraftDetail }> {
+    return this.withLock(input.draftId, async () => {
+      let job = await this.generations.get(input.draftId, input.generationId);
+      if (!["launching", "running", "needs-attention", "result-ready"].includes(job.status)) {
+        throw new Error(`Cannot commit a generation response while generation is ${job.status}`);
+      }
+      if (job.agentId && job.agentId !== input.agentId) {
+        throw new Error(`Generation Agent lineage mismatch: ${input.agentId}`);
+      }
+      const responseMarkdown = input.responseMarkdown.replace(/\r\n?/g, "\n");
+      job = await this.generations.captureResponse(
+        input.draftId,
+        input.generationId,
+        responseMarkdown,
+        input.agentId,
+      );
+      if (responseMarkdown.length > MAX_DRAFT_MARKDOWN_LENGTH) {
+        const error = `Generation Agent response exceeds the ${MAX_DRAFT_MARKDOWN_LENGTH}-character Draft limit`;
+        job = await this.generations.markFailed(input.draftId, input.generationId, error);
+        const { containerRoot, draftRoot } = await this.locateDraft(input.draftId);
+        const meta = await this.readDraftMeta(draftRoot, containerRoot);
+        await this.writeGenerationEventOnceUnlocked(containerRoot, draftRoot, input.draftId, {
+          type: "generation.failed",
+          containerId: meta.containerId,
+          summary: `Generation ${input.generationId} failed`,
+          generationId: input.generationId,
+          details: { error, agentId: input.agentId },
+        });
+        const draft = await this.loadDraftUnlocked(input.draftId, false);
+        await this.updateCachedDraft(draft, false);
+        return { job, draft };
+      }
+      return this.applyCapturedGenerationUnlocked({
+        job,
+        expectedVersion: job.baseVersion,
+        expectedHash: job.baseHash,
+      });
+    });
+  }
+
+  async applyGenerationCandidate(input: {
+    draftId: DraftId;
+    generationId: string;
+    expectedVersion: number;
+    expectedHash: string;
+  }): Promise<{ job: GenerationJob; draft: DraftDetail }> {
+    return this.withLock(input.draftId, async () => {
+      let job = await this.generations.get(input.draftId, input.generationId);
+      if (job.status !== "conflict" || !job.responseMarkdown || !job.agentId) {
+        throw new Error(`Generation ${job.id} has no conflict candidate to apply`);
+      }
+      return this.applyCapturedGenerationUnlocked({
+        job,
+        expectedVersion: input.expectedVersion,
+        expectedHash: input.expectedHash,
+      });
+    });
+  }
+
+  async discardGeneration(draftId: DraftId, generationId: string): Promise<GenerationJob> {
+    return this.withLock(draftId, async () => {
+      const job = await this.generations.discard(draftId, generationId);
+      const { containerRoot, draftRoot } = await this.locateDraft(draftId);
+      const meta = await this.readDraftMeta(draftRoot, containerRoot);
+      await this.writeGenerationEventOnceUnlocked(containerRoot, draftRoot, draftId, {
+        type: "generation.discarded",
+        containerId: meta.containerId,
+        summary: `Discarded generation candidate ${generationId}`,
+        generationId,
+      });
+      await this.updateCachedDraft(await this.loadDraftUnlocked(draftId, false), false);
+      return job;
+    });
+  }
+
+  async abandonGeneration(draftId: DraftId, generationId: string): Promise<GenerationJob> {
+    return this.withLock(draftId, async () => this.generations.abandon(draftId, generationId));
+  }
+
+  async failGeneration(
+    draftId: DraftId,
+    generationId: string,
+    error: string,
+    agentId: string | null,
+  ): Promise<GenerationJob> {
+    return this.withLock(draftId, async () => {
+      const job = await this.generations.transition(draftId, generationId, "failed", {
+        error,
+        ...(agentId ? { agentId } : {}),
+      });
+      const { containerRoot, draftRoot } = await this.locateDraft(draftId);
+      const meta = await this.readDraftMeta(draftRoot, containerRoot);
+      await this.writeGenerationEventOnceUnlocked(containerRoot, draftRoot, draftId, {
+        type: "generation.failed",
+        containerId: meta.containerId,
+        summary: `Generation ${generationId} failed`,
+        generationId,
+        details: { error, ...(agentId ? { agentId } : {}) },
+      });
+      await this.updateCachedDraft(await this.loadDraftUnlocked(draftId, false), false);
+      return job;
+    });
+  }
+
   private async createSnapshotUnlocked(draftId: DraftId): Promise<Snapshot> {
+    await this.ensureNoUnresolvedGeneration(draftId, "send this draft");
     const { containerRoot, draftRoot } = await this.locateDraft(draftId);
     let meta = await this.readDraftMeta(draftRoot, containerRoot);
     const reconciled = await this.reconcileExternalEditUnlocked(containerRoot, draftRoot, meta);
@@ -1606,6 +2261,7 @@ export class PromptStudioStore {
 
   async markDispatchAttempt(draftId: DraftId, dispatchId: string): Promise<Dispatch> {
     return this.withLock(draftId, async () => {
+      await this.ensureNoUnresolvedGeneration(draftId, "retry sending this draft");
       const { containerRoot, draftRoot } = await this.locateDraft(draftId);
       const dispatchPath = path.join(draftRoot, "dispatches", `${dispatchId}.json`);
       await assertSafePath(containerRoot, dispatchPath);
@@ -1805,6 +2461,7 @@ export class PromptStudioStore {
         tags: draft.tags,
         scope: draft.scope,
         contentHash: draft.contentHash,
+        contentOrigin: draft.contentOrigin,
         updatedAt: draft.updatedAt,
       })),
       tagTree: canonical.tagTree,

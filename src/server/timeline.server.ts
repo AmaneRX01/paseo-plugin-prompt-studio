@@ -192,7 +192,8 @@ export function buildDraftTimeline(detail: DraftDetail): TimelineEntry[] {
   const latestContentEvent = detail.events.find(
     (event) => event.type === "draft.autosaved"
       || event.type === "draft.external-edit"
-      || event.type === "checkpoint.restored",
+      || event.type === "checkpoint.restored"
+      || event.type === "generation.applied",
   );
   if (latestContentEvent) {
     timeline.push({
@@ -210,6 +211,21 @@ export function buildDraftTimeline(detail: DraftDetail): TimelineEntry[] {
   }
 
   timeline.push(...scopeTimeline(detail), ...statusTimeline(detail));
+
+  for (const event of detail.events.filter((candidate) => candidate.type.startsWith("generation."))) {
+    timeline.push({
+      id: event.id,
+      at: event.at,
+      type: "generation",
+      containerId: detail.summary.containerId,
+      draftId: detail.summary.id,
+      title: detail.summary.title,
+      summary: event.summary,
+      agentId: typeof event.details.agentId === "string" ? event.details.agentId : null,
+      dispatchId: null,
+      snapshotId: null,
+    });
+  }
 
   const orderedDispatches = [...detail.dispatches].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   for (const [dispatchIndex, dispatch] of orderedDispatches.entries()) {

@@ -21,6 +21,7 @@
 - Preserve atomic writes, path-boundary checks, symlink/Junction rejection, optimistic version/hash checks, and cross-process locking.
 - Preserve immutable send snapshots and reuse the same snapshot and `clientMessageId` during retry or reconciliation.
 - Any storage schema, layout, migration, or dispatch-lineage change requires focused recovery and regression tests.
+- Any Agent launched by Prompt Studio must be prevented from directly reading, searching, enumerating, summarizing, or modifying the Prompt Studio managed data vault. Resolve project context from logical IDs, reject managed paths at runtime, and repeat this boundary in the Agent's initial instructions. The plugin source repository remains readable when it is the explicitly scoped Project.
 
 ## UI
 

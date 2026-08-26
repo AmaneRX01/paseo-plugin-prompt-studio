@@ -47,6 +47,23 @@ export async function listCheckpoints(
   containerRoot: string,
   draftId: DraftId,
 ): Promise<{ values: Checkpoint[]; warnings: string[] }> {
+  const loaded = await listCheckpointContents(draftRoot, containerRoot, draftId);
+  return {
+    values: loaded.values.map(({ markdown: _markdown, ...checkpoint }) => checkpoint),
+    warnings: loaded.warnings,
+  };
+}
+
+/**
+ * Loads every unique checkpoint and its verified Markdown body in one bounded
+ * traversal. Generation context construction uses this instead of repeatedly
+ * reopening the same checkpoint directory through one-RPC-at-a-time reads.
+ */
+export async function listCheckpointContents(
+  draftRoot: string,
+  containerRoot: string,
+  draftId: DraftId,
+): Promise<{ values: CheckpointContent[]; warnings: string[] }> {
   const loaded: Array<{ checkpoint: CheckpointContent; filePath: string }> = [];
   const warnings: string[] = [];
   const checkpointRoot = path.join(draftRoot, "checkpoints");
@@ -66,7 +83,7 @@ export async function listCheckpoints(
 
   const values = loaded
     .filter(({ checkpoint }) => counts.get(checkpoint.id) === 1)
-    .map(({ checkpoint: { markdown: _markdown, ...checkpoint } }) => checkpoint)
+    .map(({ checkpoint }) => checkpoint)
     .sort((left, right) => right.at.localeCompare(left.at));
   return { values, warnings };
 }

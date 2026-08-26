@@ -3,6 +3,8 @@ import { z } from "zod";
 import { activeDraftStatuses, draftStatuses } from "./draft-lifecycle.shared";
 import type { TagTreeNode as SharedTagTreeNode } from "./tags.shared";
 
+export const MAX_DRAFT_MARKDOWN_LENGTH = 500_000;
+
 const isoDateSchema = z.string().datetime({ offset: true });
 const sha256Schema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
@@ -14,6 +16,7 @@ export const draftIdSchema = z.string().regex(/^dr_[a-f0-9]{16}$/);
 export const checkpointIdSchema = z.string().regex(/^cp_[a-f0-9]{24}$/);
 export const snapshotIdSchema = z.string().regex(/^sn_[a-f0-9]{24}$/);
 export const dispatchIdSchema = z.string().regex(/^ds_[a-f0-9]{24}$/);
+export const generationIdSchema = z.string().regex(/^gn_[a-f0-9]{24}$/);
 
 export const activeDraftStatusSchema = z.enum(activeDraftStatuses);
 export const draftStatusSchema = z.enum(draftStatuses);
@@ -60,8 +63,23 @@ export const containerSummarySchema = z.object({
   draftCount: z.number().int().nonnegative(),
 });
 
+export const contentOriginSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("manual") }),
+  z.object({
+    kind: z.literal("generated"),
+    task: z.enum(["related", "format"]),
+    generationId: generationIdSchema,
+    at: isoDateSchema,
+    agentId: z.string().min(1),
+    provider: z.string().min(1),
+    model: z.string().min(1),
+    includedPromptCount: z.number().int().nonnegative(),
+    includedVersionCount: z.number().int().nonnegative(),
+  }),
+]);
+
 export const draftSummarySchema = z.object({
-  schemaVersion: z.literal(4),
+  schemaVersion: z.literal(5),
   id: draftIdSchema,
   containerId: containerIdSchema,
   title: z.string(),
@@ -77,13 +95,23 @@ export const draftSummarySchema = z.object({
   lastCheckpointAt: isoDateSchema.nullable(),
   snapshotCount: z.number().int().nonnegative(),
   dispatchCount: z.number().int().nonnegative(),
+  contentOrigin: contentOriginSchema,
   preview: z.string(),
 });
 
 export const checkpointSchema = z.object({
   id: checkpointIdSchema,
   draftId: draftIdSchema,
-  reason: z.enum(["ready", "periodic", "scope", "send", "external-edit", "restore"]),
+  reason: z.enum([
+    "ready",
+    "periodic",
+    "scope",
+    "send",
+    "external-edit",
+    "restore",
+    "before-generation",
+    "before-format",
+  ]),
   at: isoDateSchema,
   version: z.number().int().positive(),
   contentHash: sha256Schema,
@@ -166,6 +194,11 @@ export const eventSchema = z.object({
     "draft.status-changed",
     "checkpoint.created",
     "checkpoint.restored",
+    "generation.started",
+    "generation.applied",
+    "generation.conflict",
+    "generation.failed",
+    "generation.discarded",
     "dispatch.pending",
     "dispatch.accepted",
     "dispatch.failed",
@@ -193,6 +226,7 @@ export const timelineEntrySchema = z.object({
     "sent",
     "failed",
     "session",
+    "generation",
     // Read-only compatibility for historical worklog Markdown.
     "worklog",
   ]),
@@ -270,7 +304,7 @@ export const draftCreateRpc = defineRpc({
   input: z.object({
     target: draftScopeTargetSchema,
     title: z.string().max(160).default("Untitled"),
-    markdown: z.string().max(500_000).default(""),
+    markdown: z.string().max(MAX_DRAFT_MARKDOWN_LENGTH).default(""),
   }),
   output: z.object({ draft: draftDetailSchema, registrationWarning: z.string().nullable() }),
 });
@@ -286,7 +320,7 @@ export const draftAutosaveRpc = defineRpc({
   input: z.object({
     draftId: draftIdSchema,
     title: z.string().max(160),
-    markdown: z.string().max(500_000),
+    markdown: z.string().max(MAX_DRAFT_MARKDOWN_LENGTH),
     expectedVersion: z.number().int().positive(),
     expectedHash: sha256Schema,
   }).strict(),
@@ -413,6 +447,7 @@ export type DraftStatus = z.infer<typeof draftStatusSchema>;
 export type ActiveDraftStatus = z.infer<typeof activeDraftStatusSchema>;
 export type DraftScope = z.infer<typeof draftScopeSchema>;
 export type DraftScopeTarget = z.infer<typeof draftScopeTargetSchema>;
+export type ContentOrigin = z.infer<typeof contentOriginSchema>;
 export type ContainerSummary = z.infer<typeof containerSummarySchema>;
 export type DraftSummary = z.infer<typeof draftSummarySchema>;
 export type DraftDetail = z.infer<typeof draftDetailSchema>;

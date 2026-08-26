@@ -66,6 +66,7 @@ import {
 import { resolveTagSetResponse } from "./studio/tag-cache.client";
 import { SendPanel, SessionSummary } from "./studio/send-panel.client";
 import { StudioHeader } from "./studio/studio-header.client";
+import { PromptAgentActions } from "./studio/prompt-agent-actions.client";
 import {
   TagChipInput,
   type TagControlLabels,
@@ -316,6 +317,9 @@ function DraftEditor({
     projectId: string | null;
   } | null>(null);
   const [dispatchBusy, setDispatchBusy] = useState(false);
+  // Keep canonical mutations closed until the durable generation query proves
+  // that this Draft has no unresolved Agent job.
+  const [generationBusy, setGenerationBusy] = useState(true);
   const [lifecycleBusy, setLifecycleBusy] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [deleteConfirming, setDeleteConfirming] = useState(false);
@@ -503,7 +507,7 @@ function DraftEditor({
   }
 
   function changeScope(projectId: string | null) {
-    if (!query.data || saveState !== "saved" || scopeBusy || tagsBusy || globalTagsBusy) return;
+    if (!query.data || saveState !== "saved" || scopeBusy || tagsBusy || globalTagsBusy || generationBusy) return;
     const canonicalProjectId = query.data.draft.summary.scope.projectId;
     if (projectId === canonicalProjectId) {
       const selection = scopeChangeQueue.current?.select(canonicalProjectId, projectId, () => {});
@@ -527,7 +531,7 @@ function DraftEditor({
   }
 
   async function changeStatus(targetStatus: DraftStatus) {
-    if (!query.data || saveState !== "saved" || tagsBusy || globalTagsBusy) return;
+    if (!query.data || saveState !== "saved" || tagsBusy || globalTagsBusy || generationBusy) return;
     setLifecycleBusy(true);
     setLifecycleError(null);
     try {
@@ -554,7 +558,7 @@ function DraftEditor({
   }
 
   async function permanentlyDelete() {
-    if (!query.data || deleteConfirmation !== draftId || saveState !== "saved" || tagsBusy || globalTagsBusy) return;
+    if (!query.data || deleteConfirmation !== draftId || saveState !== "saved" || tagsBusy || globalTagsBusy || generationBusy) return;
     setLifecycleBusy(true);
     setLifecycleError(null);
     setDeleteError(null);
@@ -605,6 +609,26 @@ function DraftEditor({
       restored ? "checkpoint.restore.success" : "checkpoint.restore.unchanged",
       restored ? { version: merged.summary.version } : undefined,
     ));
+    onCatalogDraftUpdated(merged);
+    onCatalogRefresh();
+  }
+
+  function adoptGeneratedDraft(updated: DraftDetail) {
+    const merged = preserveLatestTags(updated);
+    const nextTitle = !merged.summary.title || merged.summary.title === "Untitled" ? "" : merged.summary.title;
+    initializedDraft.current = draftId;
+    latestFingerprint.current = JSON.stringify([nextTitle, merged.markdown]);
+    queryClient.setQueryData(queryKey, { draft: merged });
+    setTitle(nextTitle);
+    setMarkdown(merged.markdown);
+    setStatus(merged.summary.status);
+    latestTags.current = merged.summary.tags;
+    setTags(merged.summary.tags);
+    setVersion(merged.summary.version);
+    setContentHash(merged.summary.contentHash);
+    setSaveState("saved");
+    setSaveError(null);
+    setCheckpointNotice(null);
     onCatalogDraftUpdated(merged);
     onCatalogRefresh();
   }
@@ -733,14 +757,16 @@ function DraftEditor({
     && !dispatchBusy
     && !scopePending
     && !scopeBusy
-    && !lifecycleBusy;
+    && !lifecycleBusy
+    && !generationBusy;
   const tagsEditable = !tagsBusy
     && !globalTagsBusy
     && !checkpointBusy
     && !dispatchBusy
     && !scopePending
     && !scopeBusy
-    && !lifecycleBusy;
+    && !lifecycleBusy
+    && !generationBusy;
 
   const editorHeader = (
     <View>
@@ -816,6 +842,7 @@ function DraftEditor({
                 || scopeBusy
                 || dispatchBusy
                 || lifecycleBusy
+                || generationBusy
                 || tagsBusy
                 || globalTagsBusy,
             },
@@ -829,6 +856,7 @@ function DraftEditor({
                  || scopeBusy
                  || dispatchBusy
                  || lifecycleBusy
+                 || generationBusy
                  || tagsBusy
                  || globalTagsBusy,
             })),
@@ -875,6 +903,7 @@ function DraftEditor({
               || scopePending
               || scopeBusy
               || lifecycleBusy
+              || generationBusy
               || tagsBusy
               || globalTagsBusy
               || !canTransitionDraftStatus(status, option.id, detail.summary.archivedFromStatus),
@@ -896,6 +925,7 @@ function DraftEditor({
             || scopeBusy
             || dispatchBusy
             || lifecycleBusy
+            || generationBusy
             || tagsBusy
             || globalTagsBusy}
           small
@@ -915,7 +945,7 @@ function DraftEditor({
                 setDeleteConfirmation("");
                 setDeleteError(null);
               }}
-              disabled={lifecycleBusy || hasPendingDispatch || tagsBusy || globalTagsBusy}
+              disabled={lifecycleBusy || generationBusy || hasPendingDispatch || tagsBusy || globalTagsBusy}
               small
               theme={theme}
               variant="danger"
@@ -944,7 +974,7 @@ function DraftEditor({
                 <NativeButton
                   label={lifecycleBusy ? t("editor.delete.deleting") : t("editor.delete.confirm")}
                   onPress={() => void permanentlyDelete()}
-                  disabled={lifecycleBusy || deleteConfirmation !== draftId || tagsBusy || globalTagsBusy}
+                  disabled={lifecycleBusy || generationBusy || deleteConfirmation !== draftId || tagsBusy || globalTagsBusy}
                   small
                   theme={theme}
                   variant="danger"
@@ -981,6 +1011,23 @@ function DraftEditor({
         />
         {tagsBusy || globalTagsBusy ? <Hint theme={theme}>{t("editor.tags.saving")}</Hint> : null}
       </View>
+      <PromptAgentActions
+        compact={compact}
+        detail={detail}
+        disabled={checkpointBusy
+          || dispatchBusy
+          || scopePending
+          || scopeBusy
+          || lifecycleBusy
+          || tagsBusy
+          || globalTagsBusy}
+        onBusyChange={setGenerationBusy}
+        onUpdated={adoptGeneratedDraft}
+        projects={projects}
+        saveState={saveState}
+        tagSuggestions={tagSuggestions}
+        theme={theme}
+      />
       <NativeTextInput
         accessibilityLabel={t("editor.markdown.placeholder")}
         autoFocus={autoFocusBody}
@@ -1067,6 +1114,7 @@ function DraftEditor({
                 || scopePending
                 || scopeBusy
                 || lifecycleBusy
+                || generationBusy
                 || tagsBusy
                 || globalTagsBusy;
               const starred = starredCheckpointIds.has(checkpoint.id);
@@ -1146,6 +1194,7 @@ function DraftEditor({
         || scopePending
         || scopeBusy
         || lifecycleBusy
+        || generationBusy
         || tagsBusy
         || globalTagsBusy}
       sendDisabledReason={archived

@@ -18,7 +18,18 @@ import {
   tagBatchRpc,
   tagRenameRpc,
 } from "./src/shared/contracts.shared";
-import { handlers } from "./src/server/handlers.server";
+import {
+  generationAbandonRpc,
+  generationApplyCandidateRpc,
+  generationDiscardRpc,
+  generationGetRpc,
+  generationPreviewRpc,
+  generationSettingsGetRpc,
+  generationSettingsUpdateRpc,
+  generationStartRpc,
+  generationSyncRpc,
+} from "./src/shared/generation.shared";
+import { generationHandlers, handlers } from "./src/server/handlers.server";
 import { PromptStudioSurface, WorklogSurface } from "./src/client/main.client";
 import { PromptAgentPanel, PromptWorkspacePanel } from "./src/client/panel.client";
 
@@ -42,6 +53,15 @@ export default function contribute(plugin: PluginContext) {
   plugin.handle(dispatchSendRpc, handlers.dispatchSend);
   plugin.handle(dispatchRetryRpc, handlers.dispatchRetry);
   plugin.handle(dispatchReconcileRpc, handlers.dispatchReconcile);
+  plugin.handle(generationSettingsGetRpc, generationHandlers.generationSettingsGet);
+  plugin.handle(generationSettingsUpdateRpc, generationHandlers.generationSettingsUpdate);
+  plugin.handle(generationPreviewRpc, generationHandlers.generationPreview);
+  plugin.handle(generationStartRpc, generationHandlers.generationStart);
+  plugin.handle(generationGetRpc, generationHandlers.generationGet);
+  plugin.handle(generationSyncRpc, generationHandlers.generationSync);
+  plugin.handle(generationApplyCandidateRpc, generationHandlers.generationApplyCandidate);
+  plugin.handle(generationDiscardRpc, generationHandlers.generationDiscard);
+  plugin.handle(generationAbandonRpc, generationHandlers.generationAbandon);
 
   plugin.addSurface("prompt-studio", PromptStudioSurface);
   plugin.addSidebarItem({

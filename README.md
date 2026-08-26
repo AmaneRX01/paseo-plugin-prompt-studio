@@ -21,6 +21,8 @@ The product name is **Prompt Studio for Paseo**. The repository and npm package 
 - A server-enforced `draft ⇄ ready` lifecycle. Marking a draft ready creates a checkpoint; changing its title or Markdown returns it to draft.
 - Hierarchical tags such as `Research/AI`, with autocomplete, case-insensitive deduplication, tree filtering, global rename/merge, and bulk assignment.
 - Immutable send snapshots, stable `clientMessageId` reuse, safe retries, and Agent timeline reconciliation.
+- Project-scoped Prompt Agents for related-Prompt optimization and format-only cleanup, with deterministic context counts, budget previews, durable recovery, and conflict candidates.
+- Independent provider/model/thinking settings for both generation tasks, plus provider-native read-only controls and explicit disclosure where Paseo 0.5.1 cannot enforce a readable-path allowlist.
 - Archive and restore support, plus journaled permanent deletion for eligible archived drafts.
 - A disposable derived catalog that can always be rebuilt from canonical Markdown and JSON.
 - English and Chinese UI, responsive desktop/compact layouts, and Paseo light/dark theme support.
@@ -68,6 +70,10 @@ Use `paseo plugin reload` for source changes; do not restart the daemon.
 
 Open **Prompt Studio** from the Paseo sidebar or Command Center. Create a draft, edit its title and Markdown, and optionally organize it with hierarchical tags. Autosave reports pending, saved, conflict, and failure states.
 
+For a saved Draft assigned to a Project, use **Optimize from related Prompts** to preview and select tag, time, history, and cross-Project context. The preview reports eligible and actually included Prompt/version counts and whether the model budget removed whole reference versions. Project-file access is off for every run unless you explicitly enable its read-only option. Use the smaller format action for prose and Markdown cleanup without Prompt history, related Drafts, or Project files. Configure the provider, model, and thinking option for each task independently from Settings.
+
+Generation runs are durable and single-flight per Draft. While one is unresolved, Prompt Studio locks mutations and sending for that Draft but lets you browse other Drafts. A successful reply becomes the latest body, creates an undo checkpoint, marks the Draft as generated, and returns `ready` to `draft`. If the Draft changed while the Agent was running, the reply is retained as a conflict candidate and is never applied without an explicit latest-version check.
+
 When the content is ready to send, change the draft state to **Ready**. Prompt Studio creates a checkpoint before the transition. Select an existing Agent or configure a new Agent, then freeze and send the current version. The frozen snapshot remains unchanged even if the draft is edited later.
 
 Open **Worklog** for a read-only activity timeline. From a Workspace or Agent context, use **Open Prompt Scratchpad** to work with the drafts scoped to that Project.
@@ -83,6 +89,8 @@ By default, Prompt Studio stores its plaintext vault at:
 Set `PASEO_PROMPT_STUDIO_HOME` before starting the daemon to choose another location.
 
 Markdown and JSON files are canonical. `catalog.json` is a derived index and may be deleted and rebuilt. External Project directories are logical links only; losing a link never deletes its drafts. Back up the entire vault before moving it or changing its storage location.
+
+Paseo 0.5.1 does not expose a provider-independent read allowlist or an OS/container security boundary for Agents. Prompt Studio validates and rejects managed-vault paths, forces the strongest available provider-native read-only policy, and repeats no-file/project-only rules in the Agent prompt. The UI identifies behavioral-only protection; it must not be interpreted as hard filesystem isolation.
 
 ## Project structure
 

@@ -412,6 +412,9 @@ export function DraftListPane({
             tone={draft.status === "ready" ? "accent" : "neutral"}
           />
           <StatusPill label={scopeLabel(t, draft.scope)} theme={theme} />
+          {draft.contentOrigin.kind === "generated" ? (
+            <StatusPill label={t("editor.generated")} theme={theme} tone="accent" />
+          ) : null}
           {draft.tags.slice(0, 2).map((tag) => (
             <TagFilterChip
               compact

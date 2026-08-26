@@ -70,6 +70,8 @@ export function checkpointReasonKey(reason: Checkpoint["reason"]): MessageKey {
     case "send": return "checkpoint.reason.send";
     case "external-edit": return "checkpoint.reason.externalEdit";
     case "restore": return "checkpoint.reason.restore";
+    case "before-generation": return "checkpoint.reason.beforeGeneration";
+    case "before-format": return "checkpoint.reason.beforeFormat";
   }
 }
 
@@ -84,6 +86,7 @@ export function timelineLabelKey(type: TimelineEntry["type"]): MessageKey {
     case "sent": return "timeline.sent";
     case "failed": return "timeline.failed";
     case "session": return "timeline.session";
+    case "generation": return "timeline.generation";
     case "worklog": return "timeline.worklog";
   }
 }
