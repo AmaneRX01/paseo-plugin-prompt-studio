@@ -3,7 +3,10 @@ import Module from "node:module";
 import path from "node:path";
 import test from "node:test";
 import type { CheckpointContent, DraftSummary } from "../src/shared/contracts.shared";
-import type { GenerationContextFilters } from "../src/shared/generation.shared";
+import type {
+  GenerationContextFilters,
+  GenerationContextFiltersV2,
+} from "../src/shared/generation.shared";
 import type { GenerationContextDraft } from "../src/server/generation-context.server";
 
 const moduleInternals = Module as unknown as {
@@ -99,6 +102,34 @@ function filters(overrides: Partial<GenerationContextFilters> = {}): GenerationC
   };
 }
 
+function sourceFilters(overrides: {
+  targetCheckpoints?: Partial<GenerationContextFiltersV2["targetCheckpoints"]>;
+  projectPrompts?: Partial<GenerationContextFiltersV2["projectPrompts"]>;
+  tagPrompts?: Partial<GenerationContextFiltersV2["tagPrompts"]>;
+} = {}): GenerationContextFiltersV2 {
+  return {
+    schemaVersion: 2,
+    targetCheckpoints: {
+      enabled: true,
+      timeRange: "90d",
+      ...overrides.targetCheckpoints,
+    },
+    projectPrompts: {
+      enabled: true,
+      timeRange: "90d",
+      projectIds: ["project-1"],
+      includeInbox: false,
+      ...overrides.projectPrompts,
+    },
+    tagPrompts: {
+      enabled: true,
+      timeRange: "90d",
+      tagPaths: ["Code"],
+      ...overrides.tagPrompts,
+    },
+  };
+}
+
 test("related context filters by current tags and project, deduplicates checkpoint bodies, and reports exact counts", () => {
   const targetId = "dr_1111111111111111";
   const target = draft(targetId, "TARGET CURRENT", { tags: ["Code/API"] }, [
@@ -136,6 +167,10 @@ test("related context filters by current tags and project, deduplicates checkpoi
   assert.match(result.requestMarkdown, /RELATED CURRENT/);
   assert.match(result.requestMarkdown, /RELATED HISTORY/);
   assert.doesNotMatch(result.requestMarkdown, /WRONG PROJECT|WRONG TAG|ARCHIVED/);
+  assert.doesNotMatch(
+    result.requestMarkdown,
+    /dr_1111111111111111|dr_2222222222222222|cp_222222222222222222222222|sha256:/,
+  );
   assert.deepEqual(result.counts, {
     eligibleOtherPromptCount: 1,
     includedOtherPromptCount: 1,
@@ -182,6 +217,94 @@ test("cross-project selection can include selected Projects and Inbox while excl
   assert.match(result.requestMarkdown, /INBOX/);
   assert.doesNotMatch(result.requestMarkdown, /UNSELECTED/);
   assert.equal(result.counts.includedOtherPromptCount, 2);
+});
+
+test("source-specific filters union selected Projects and tags without including related checkpoints", () => {
+  const target = draft("dr_1111111111111111", "TARGET", { tags: ["Code"] });
+  const projectOnlyId = "dr_2222222222222222";
+  const projectOnly = draft(projectOnlyId, "PROJECT ONLY", {
+    projectId: "project-2",
+    projectName: "Project Two",
+    tags: ["Writing"],
+  }, [checkpoint(projectOnlyId, "cp_111111111111111111111111", "PROJECT HISTORY")]);
+  const tagOnly = draft("dr_3333333333333333", "TAG ONLY", {
+    projectId: "project-3",
+    projectName: "Project Three",
+    tags: ["Code/API"],
+  });
+  const both = draft("dr_4444444444444444", "BOTH SOURCES", {
+    projectId: "project-2",
+    projectName: "Project Two",
+    tags: ["Code"],
+  });
+  const unrelated = draft("dr_5555555555555555", "UNRELATED", {
+    projectId: "project-4",
+    projectName: "Project Four",
+    tags: ["Writing"],
+  });
+
+  const result = buildGenerationContext({
+    task: "related",
+    locale: "en",
+    target,
+    candidates: [projectOnly, tagOnly, both, unrelated],
+    filters: sourceFilters({
+      targetCheckpoints: { enabled: false },
+      projectPrompts: { projectIds: ["project-2"], timeRange: "all" },
+      tagPrompts: { tagPaths: ["Code"], timeRange: "all" },
+    }),
+    allowProjectRead: false,
+    forbiddenVaultPath: "C:\\vault",
+    now,
+    entropy: () => "fixed",
+  });
+
+  assert.match(result.requestMarkdown, /PROJECT ONLY|TAG ONLY|BOTH SOURCES/);
+  assert.doesNotMatch(result.requestMarkdown, /PROJECT HISTORY|UNRELATED/);
+  assert.equal(result.counts.eligibleOtherPromptCount, 3);
+  assert.equal(result.counts.eligibleReferenceVersionCount, 3);
+  assert.equal(result.includedSources.length, 3, "a prompt matching both sources must be deduplicated");
+});
+
+test("each source applies its own time range", () => {
+  const targetId = "dr_1111111111111111";
+  const target = draft(targetId, "TARGET", { tags: [] }, [
+    checkpoint(targetId, "cp_111111111111111111111111", "TARGET 10 DAYS", "2026-08-16T12:00:00.000Z"),
+    checkpoint(targetId, "cp_222222222222222222222222", "TARGET TOO OLD", "2026-07-01T00:00:00.000Z"),
+  ]);
+  const projectExpiredButTagFresh = draft("dr_2222222222222222", "TAG RANGE WINS", {
+    projectId: "project-2",
+    projectName: "Project Two",
+    tags: ["Code"],
+    updatedAt: "2026-08-16T12:00:00.000Z",
+  });
+  const tagExpired = draft("dr_3333333333333333", "TAG TOO OLD", {
+    projectId: "project-3",
+    projectName: "Project Three",
+    tags: ["Code"],
+    updatedAt: "2026-08-01T00:00:00.000Z",
+  });
+
+  const result = buildGenerationContext({
+    task: "related",
+    locale: "en",
+    target,
+    candidates: [projectExpiredButTagFresh, tagExpired],
+    filters: sourceFilters({
+      targetCheckpoints: { timeRange: "14d" },
+      projectPrompts: { projectIds: ["project-2"], timeRange: "3d" },
+      tagPrompts: { tagPaths: ["Code"], timeRange: "14d" },
+    }),
+    allowProjectRead: false,
+    forbiddenVaultPath: "C:\\vault",
+    now,
+    entropy: () => "fixed",
+  });
+
+  assert.match(result.requestMarkdown, /TARGET 10 DAYS|TAG RANGE WINS/);
+  assert.doesNotMatch(result.requestMarkdown, /TARGET TOO OLD|TAG TOO OLD/);
+  assert.equal(result.counts.eligibleOtherPromptCount, 1);
+  assert.equal(result.counts.eligibleTargetHistoryVersionCount, 1);
 });
 
 test("time filtering applies per version and a qualifying checkpoint does not pull in an expired current body", () => {
@@ -277,6 +400,33 @@ test("format context is Chinese-only, ignores all references, and cannot enable 
     allowProjectRead: true,
     forbiddenVaultPath: "C:\\vault",
   }), /cannot access Project files/i);
+});
+
+test("target and reference control metadata never enter the Agent request body", () => {
+  const target = draft("dr_fd1706f215518cde", "提升代码稳定性", {
+    title: "阿斯顿",
+    tags: ["工具", "工具/test"],
+    projectId: "prj_69c4509c8cae7746",
+    projectName: "worklog_plugin",
+    updatedAt: "2026-08-26T09:23:08.223Z",
+  });
+  const result = buildGenerationContext({
+    task: "format",
+    locale: "zh",
+    target,
+    candidates: [],
+    filters: null,
+    allowProjectRead: false,
+    forbiddenVaultPath: "C:\\vault",
+    entropy: () => "fixed",
+  });
+
+  assert.match(result.requestMarkdown, /目标 PROMPT\n提升代码稳定性\n/);
+  assert.doesNotMatch(
+    result.requestMarkdown,
+    /dr_fd1706f215518cde|阿斯顿|工具\/test|worklog_plugin|contentHash|draftId|sha256:/,
+  );
+  assert.match(result.systemPrompt, /边界标记均为控制信息，禁止在回复中复现/);
 });
 
 test("the target body is never truncated and an oversized target fails visibly", () => {

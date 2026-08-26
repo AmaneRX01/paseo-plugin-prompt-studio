@@ -12,7 +12,26 @@ const sha256Schema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
 export const generationTaskSchema = z.enum(["related", "format"]);
 export const generationLocaleSchema = z.enum(["en", "zh"]);
-export const generationTimeRangeSchema = z.enum(["7d", "30d", "90d", "all"]);
+const generationFiniteTimeRangeSchema = z.string()
+  .regex(/^[1-9]\d{0,3}d$/)
+  .refine((value) => Number.parseInt(value, 10) <= 3_650, "Time range must not exceed 3650 days");
+export const generationTimeRangeSchema = z.union([
+  generationFiniteTimeRangeSchema,
+  z.literal("all"),
+]);
+export const generationTimeRangeDaysSchema = z.tuple([
+  z.number().int().min(1).max(3_650),
+  z.number().int().min(1).max(3_650),
+  z.number().int().min(1).max(3_650),
+]).superRefine((values, context) => {
+  if (values[0] >= values[1] || values[1] >= values[2]) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Time ranges must be strictly increasing",
+    });
+  }
+});
+export const DEFAULT_GENERATION_TIME_RANGE_DAYS = [3, 7, 14] as const;
 
 export const generationProviderConfigSchema = z.object({
   provider: z.string().trim().min(1),
@@ -25,10 +44,11 @@ export const generationSettingsSchema = z.object({
   version: z.number().int().positive(),
   related: generationProviderConfigSchema.nullable(),
   format: generationProviderConfigSchema.nullable(),
+  contextTimeRangeDays: generationTimeRangeDaysSchema.default([...DEFAULT_GENERATION_TIME_RANGE_DAYS]),
   updatedAt: isoDateSchema,
 }).strict();
 
-export const generationContextFiltersSchema = z.object({
+const legacyGenerationContextFiltersSchema = z.object({
   includeHistory: z.boolean(),
   timeRange: generationTimeRangeSchema,
   tagPaths: z.array(z.string().trim().min(1)).max(100),
@@ -37,14 +57,51 @@ export const generationContextFiltersSchema = z.object({
   includeInbox: z.boolean(),
 }).strict();
 
-export const defaultGenerationContextFilters = Object.freeze({
-  includeHistory: true,
-  timeRange: "90d",
-  tagPaths: [] as string[],
-  crossProject: false,
-  projectIds: [] as string[],
-  includeInbox: false,
-}) satisfies GenerationContextFilters;
+const generationTimedSourceSchema = z.object({
+  enabled: z.boolean(),
+  timeRange: generationTimeRangeSchema,
+}).strict();
+
+export const generationContextFiltersV2Schema = z.object({
+  schemaVersion: z.literal(2),
+  targetCheckpoints: generationTimedSourceSchema,
+  projectPrompts: generationTimedSourceSchema.extend({
+    projectIds: z.array(z.string().min(1)).max(100),
+    includeInbox: z.boolean(),
+  }).strict(),
+  tagPrompts: generationTimedSourceSchema.extend({
+    tagPaths: z.array(z.string().trim().min(1)).max(100),
+  }).strict(),
+}).strict();
+
+/**
+ * Durable generation jobs created before source-specific ranges remain valid.
+ * New calls always use v2; the legacy branch exists only so an already-frozen
+ * job can still be reconciled or resumed without rewriting its provenance.
+ */
+export const generationContextFiltersSchema = z.union([
+  generationContextFiltersV2Schema,
+  legacyGenerationContextFiltersSchema,
+]);
+
+export const defaultGenerationContextFilters: GenerationContextFiltersV2 = Object.freeze({
+  schemaVersion: 2,
+  targetCheckpoints: {
+    enabled: true,
+    timeRange: "14d",
+  },
+  projectPrompts: {
+    enabled: true,
+    timeRange: "14d",
+    projectIds: [] as string[],
+    includeInbox: false,
+  },
+  tagPrompts: {
+    enabled: true,
+    timeRange: "14d",
+    tagPaths: [] as string[],
+  },
+} satisfies GenerationContextFiltersV2);
 
 export const generationContextCountsSchema = z.object({
   eligibleOtherPromptCount: z.number().int().nonnegative(),
@@ -164,6 +221,7 @@ export const generationSettingsUpdateRpc = defineRpc({
     expectedVersion: z.number().int().positive(),
     related: generationProviderConfigSchema.nullable(),
     format: generationProviderConfigSchema.nullable(),
+    contextTimeRangeDays: generationTimeRangeDaysSchema,
   }).strict(),
   output: z.object({ settings: generationSettingsSchema }).strict(),
 });
@@ -233,9 +291,11 @@ export const generationAbandonRpc = defineRpc({
 export type GenerationTask = z.infer<typeof generationTaskSchema>;
 export type GenerationLocale = z.infer<typeof generationLocaleSchema>;
 export type GenerationTimeRange = z.infer<typeof generationTimeRangeSchema>;
+export type GenerationTimeRangeDays = z.infer<typeof generationTimeRangeDaysSchema>;
 export type GenerationProviderConfig = z.infer<typeof generationProviderConfigSchema>;
 export type GenerationSettings = z.infer<typeof generationSettingsSchema>;
 export type GenerationContextFilters = z.infer<typeof generationContextFiltersSchema>;
+export type GenerationContextFiltersV2 = z.infer<typeof generationContextFiltersV2Schema>;
 export type GenerationContextCounts = z.infer<typeof generationContextCountsSchema>;
 export type GenerationContextSource = z.infer<typeof generationContextSourceSchema>;
 export type GenerationProject = z.infer<typeof generationProjectSchema>;

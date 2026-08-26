@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type PluginTheme, usePaseo, useRpc } from "@getpaseo/plugin";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, ScrollView, Switch, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, Switch, Text, View } from "react-native";
 import type { DraftDetail } from "../../shared/contracts.shared";
 import {
+  DEFAULT_GENERATION_TIME_RANGE_DAYS,
   defaultGenerationContextFilters,
   generationAbandonRpc,
   generationApplyCandidateRpc,
@@ -15,10 +16,10 @@ import {
   generationSyncRpc,
   type GenerationContextCounts,
   type GenerationContextFilters,
+  type GenerationContextFiltersV2,
   type GenerationJob,
   type GenerationProtection,
   type GenerationTask,
-  type GenerationTimeRange,
 } from "../../shared/generation.shared";
 import { useI18n } from "../i18n.client";
 import {
@@ -26,13 +27,15 @@ import {
   FieldLabel,
   Hint,
   NativeButton,
+  NativeDialog,
   SegmentedControl,
   StatusPill,
   font,
   paletteOf,
-  uiMetrics,
 } from "../ui.client";
 import { errorMessage } from "./studio-formatters.client";
+import { BoilerplatePicker } from "./boilerplate-picker.client";
+import { GenerationContextSourceCard } from "./generation-context-controls.client";
 import {
   generationStatusMessageKey,
   isUnresolvedGenerationStatus,
@@ -58,6 +61,8 @@ export interface PromptAgentActionsProps {
   tagSuggestions?: readonly TagSuggestion[];
   disabled?: boolean;
   disabledReason?: string;
+  boilerplateDisabled?: boolean;
+  onAppendBoilerplate: (boilerplate: string) => void;
   onUpdated: (draft: DraftDetail) => void;
   onBusyChange?: (busy: boolean) => void;
 }
@@ -66,6 +71,32 @@ function toggleValue(values: readonly string[], value: string): string[] {
   return values.includes(value)
     ? values.filter((entry) => entry !== value)
     : [...values, value];
+}
+
+function initialContextFilters(
+  detail: DraftDetail,
+  timeRangeDays: readonly [number, number, number] = DEFAULT_GENERATION_TIME_RANGE_DAYS,
+): GenerationContextFiltersV2 {
+  const currentProjectId = detail.summary.scope.projectId;
+  const defaultTimeRange = `${timeRangeDays[2]}d`;
+  return {
+    schemaVersion: 2,
+    targetCheckpoints: {
+      ...defaultGenerationContextFilters.targetCheckpoints,
+      timeRange: defaultTimeRange,
+    },
+    projectPrompts: {
+      ...defaultGenerationContextFilters.projectPrompts,
+      timeRange: defaultTimeRange,
+      projectIds: currentProjectId ? [currentProjectId] : [],
+    },
+    tagPrompts: {
+      ...defaultGenerationContextFilters.tagPrompts,
+      timeRange: defaultTimeRange,
+      enabled: detail.summary.tags.length > 0,
+      tagPaths: [...detail.summary.tags],
+    },
+  };
 }
 
 function countsView(counts: GenerationContextCounts, theme: PluginTheme) {
@@ -113,17 +144,13 @@ function ContextCounts({
 function ProtectionNotice({ protection, theme }: { protection: GenerationProtection; theme: PluginTheme }) {
   const { t } = useI18n();
   return (
-    <View style={{ gap: 5 }}>
-      <StatusPill
-        label={t(protection.level === "native-policy"
-          ? "generation.security.native"
-          : "generation.security.behavioral")}
-        theme={theme}
-        tone={protection.level === "native-policy" ? "accent" : "danger"}
-      />
-      {protection.warning ? <Hint danger theme={theme}>{protection.warning}</Hint> : null}
-      <Hint danger theme={theme}>{t("generation.security.warning")}</Hint>
-    </View>
+    <StatusPill
+      label={t(protection.level === "native-policy"
+        ? "generation.security.native"
+        : "generation.security.behavioral")}
+      theme={theme}
+      tone={protection.level === "native-policy" ? "accent" : "danger"}
+    />
   );
 }
 
@@ -245,6 +272,8 @@ export function PromptAgentActions({
   tagSuggestions = [],
   disabled = false,
   disabledReason,
+  boilerplateDisabled = false,
+  onAppendBoilerplate,
   onUpdated,
   onBusyChange,
 }: PromptAgentActionsProps) {
@@ -262,10 +291,7 @@ export function PromptAgentActions({
   const abandonGeneration = useRpc(generationAbandonRpc);
 
   const [modalOpen, setModalOpen] = useState(false);
-  const [filters, setFilters] = useState<GenerationContextFilters>(() => ({
-    ...defaultGenerationContextFilters,
-    tagPaths: [...detail.summary.tags],
-  }));
+  const [filters, setFilters] = useState<GenerationContextFiltersV2>(() => initialContextFilters(detail));
   const [allowProjectRead, setAllowProjectRead] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [waitEpoch, setWaitEpoch] = useState(0);
@@ -321,10 +347,7 @@ export function PromptAgentActions({
   }, [detail.summary.scope.projectId, detail.summary.scope.projectName, projects]);
 
   useEffect(() => {
-    setFilters({
-      ...defaultGenerationContextFilters,
-      tagPaths: [...detail.summary.tags],
-    });
+    setFilters(initialContextFilters(detail));
     setAllowProjectRead(false);
     setModalOpen(false);
     setOperationError(null);
@@ -532,12 +555,15 @@ export function PromptAgentActions({
       detail.summary.id,
       detail.summary.version,
       detail.summary.contentHash,
-      filters.includeHistory,
-      filters.timeRange,
-      filters.tagPaths.join("\u001f"),
-      filters.crossProject,
-      filters.projectIds.join("\u001f"),
-      filters.includeInbox,
+      filters.targetCheckpoints.enabled,
+      filters.targetCheckpoints.timeRange,
+      filters.projectPrompts.enabled,
+      filters.projectPrompts.timeRange,
+      filters.projectPrompts.projectIds.join("\u001f"),
+      filters.projectPrompts.includeInbox,
+      filters.tagPrompts.enabled,
+      filters.tagPrompts.timeRange,
+      filters.tagPrompts.tagPaths.join("\u001f"),
       allowProjectRead,
       language,
       settingsQuery.data?.settings.version ?? 0,
@@ -557,41 +583,59 @@ export function PromptAgentActions({
   });
 
   function openRelatedModal() {
-    const currentProjectId = detail.summary.scope.projectId;
-    setFilters({
-      ...defaultGenerationContextFilters,
-      tagPaths: [...detail.summary.tags],
-      projectIds: currentProjectId ? [currentProjectId] : [],
-    });
+    setFilters(initialContextFilters(
+      detail,
+      settingsQuery.data?.settings.contextTimeRangeDays ?? DEFAULT_GENERATION_TIME_RANGE_DAYS,
+    ));
     setAllowProjectRead(false);
     setOperationError(null);
     setModalOpen(true);
   }
 
+  function closeRelatedModal() {
+    setModalOpen(false);
+    setAllowProjectRead(false);
+  }
+
   const relatedDisabled = baseDisabled || !relatedConfigured || settingsQuery.isPending;
   const formatDisabled = baseDisabled || !formatConfigured || settingsQuery.isPending;
   const settingsMissing = !settingsQuery.isPending && (!relatedConfigured || !formatConfigured);
+  const contextTimeRangeDays = settingsQuery.data?.settings.contextTimeRangeDays
+    ?? DEFAULT_GENERATION_TIME_RANGE_DAYS;
+  const timeRangeOptions = useMemo(() => ([
+    ...contextTimeRangeDays.map((days) => ({
+      id: `${days}d`,
+      label: t("generation.time.days", { count: days }),
+    })),
+    { id: "all" as const, label: t("generation.time.all") },
+  ]), [contextTimeRangeDays, t]);
 
   return (
     <View style={{ gap: 8 }}>
       <View
         style={{
           alignItems: "center",
-          backgroundColor: palette.raised,
-          borderColor: palette.border,
-          borderRadius: uiMetrics.surfaceRadius,
-          borderWidth: 1,
+          borderTopColor: palette.border,
+          borderTopWidth: 1,
           flexDirection: "row",
           flexWrap: "wrap",
           gap: 8,
-          padding: compact ? 8 : 10,
+          justifyContent: compact ? "flex-start" : "flex-end",
+          paddingTop: compact ? 8 : 10,
         }}
       >
+        <BoilerplatePicker
+          compact={compact}
+          disabled={boilerplateDisabled}
+          onInsert={onAppendBoilerplate}
+          theme={theme}
+        />
         <NativeButton
           disabled={relatedDisabled}
           label={startMutation.isPending ? t("generation.starting") : t("generation.related.action")}
           onPress={openRelatedModal}
           small
+          style={compact ? { flexGrow: 1 } : undefined}
           theme={theme}
         />
         <NativeButton
@@ -603,12 +647,10 @@ export function PromptAgentActions({
             startMutation.mutate({ task: "format", contextFilters: null, projectRead: false });
           }}
           small
+          style={compact ? { flexGrow: 1 } : undefined}
           theme={theme}
           variant="outline"
         />
-        {detail.summary.contentOrigin.kind === "generated" ? (
-          <StatusPill label={t("editor.generated")} theme={theme} tone="accent" />
-        ) : null}
         {jobQuery.isFetching && !job ? <ActivityIndicator color={theme.colors.accent} size="small" /> : null}
       </View>
 
@@ -656,166 +698,138 @@ export function PromptAgentActions({
         />
       ) : null}
 
-      <Modal
-        animationType="fade"
-        onRequestClose={() => {
-          setModalOpen(false);
-          setAllowProjectRead(false);
-        }}
-        transparent
+      <NativeDialog
+        accessibilityLabel={t("generation.close")}
+        compact={compact}
+        description={t("generation.related.help")}
+        onClose={closeRelatedModal}
+        theme={theme}
+        title={t("generation.related.title")}
         visible={modalOpen}
       >
-        <View style={{ alignItems: "center", flex: 1, justifyContent: "center", padding: compact ? 12 : 24 }}>
-          <Pressable
-            accessibilityLabel={t("generation.close")}
-            accessibilityRole="button"
-            onPress={() => {
-              setModalOpen(false);
-              setAllowProjectRead(false);
-            }}
-            style={{ bottom: 0, left: 0, position: "absolute", right: 0, top: 0 }}
-          />
-          <View
-            accessibilityViewIsModal
-            style={{
-              backgroundColor: theme.colors.surface0,
-              borderColor: palette.borderStrong,
-              borderRadius: uiMetrics.surfaceRadius,
-              borderWidth: 1,
-              maxHeight: "90%",
-              maxWidth: 680,
-              padding: compact ? 12 : 16,
-              width: "100%",
-            }}
-          >
-            <View style={{ alignItems: "center", flexDirection: "row", gap: 10, paddingBottom: 10 }}>
-              <View style={{ flex: 1, gap: 3 }}>
-                <Text style={{ color: theme.colors.foreground, fontSize: font.title, fontWeight: "500" }}>
-                  {t("generation.related.title")}
-                </Text>
-                <Hint theme={theme}>{t("generation.related.help")}</Hint>
-              </View>
-              <NativeButton
-                accessibilityLabel={t("generation.close")}
-                label="×"
-                onPress={() => {
-                  setModalOpen(false);
-                  setAllowProjectRead(false);
-                }}
-                small
-                style={{ minWidth: uiMetrics.compactControlHeight, paddingHorizontal: 0 }}
+        <ScrollView
+          contentContainerStyle={{ gap: 14, paddingBottom: 2, paddingRight: compact ? 2 : 6 }}
+          keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled
+          persistentScrollbar
+          showsVerticalScrollIndicator
+          style={{ flexShrink: 1, minHeight: 0 }}
+        >
+              <GenerationContextSourceCard
+                accessibilityLabel={t("generation.sources.target.label")}
+                compact={compact}
+                enabled={filters.targetCheckpoints.enabled}
+                help={t("generation.sources.target.help")}
+                onEnabledChange={(enabled) => setFilters((current) => ({
+                  ...current,
+                  targetCheckpoints: { ...current.targetCheckpoints, enabled },
+                }))}
+                onTimeRangeChange={(timeRange) => setFilters((current) => ({
+                  ...current,
+                  targetCheckpoints: { ...current.targetCheckpoints, timeRange },
+                }))}
                 theme={theme}
-                variant="ghost"
+                timeLabel={t("generation.time.label")}
+                timeOptions={timeRangeOptions}
+                timeRange={filters.targetCheckpoints.timeRange}
+                title={t("generation.sources.target.label")}
               />
-            </View>
-            <ScrollView
-              contentContainerStyle={{ gap: 14, paddingBottom: 2 }}
-              keyboardShouldPersistTaps="handled"
-              style={{ minHeight: 0 }}
-            >
-              <View style={{ alignItems: "center", flexDirection: "row", gap: 12 }}>
-                <View style={{ flex: 1, gap: 3 }}>
-                  <Text style={{ color: theme.colors.foreground, fontSize: font.body, fontWeight: "500" }}>
-                    {t("generation.history.label")}
-                  </Text>
-                  <Hint theme={theme}>{t("generation.history.help")}</Hint>
-                </View>
-                <Switch
-                  accessibilityLabel={t("generation.history.label")}
-                  accessibilityRole="switch"
-                  onValueChange={(includeHistory) => setFilters((current) => ({ ...current, includeHistory }))}
-                  thumbColor={filters.includeHistory ? theme.colors.accentForeground : theme.colors.foregroundMuted}
-                  trackColor={{ false: palette.controlStrong, true: theme.colors.accent }}
-                  value={filters.includeHistory}
-                />
-              </View>
 
-              <View style={{ gap: 6 }}>
-                <FieldLabel theme={theme}>{t("generation.time.label")}</FieldLabel>
+              <GenerationContextSourceCard
+                accessibilityLabel={t("generation.sources.projects.label")}
+                compact={compact}
+                enabled={filters.projectPrompts.enabled}
+                help={t("generation.sources.projects.help")}
+                onEnabledChange={(enabled) => setFilters((current) => ({
+                  ...current,
+                  projectPrompts: { ...current.projectPrompts, enabled },
+                }))}
+                onTimeRangeChange={(timeRange) => setFilters((current) => ({
+                  ...current,
+                  projectPrompts: { ...current.projectPrompts, timeRange },
+                }))}
+                theme={theme}
+                timeLabel={t("generation.time.label")}
+                timeOptions={timeRangeOptions}
+                timeRange={filters.projectPrompts.timeRange}
+                title={t("generation.sources.projects.label")}
+              >
+                <FieldLabel theme={theme}>{t("generation.projects.label")}</FieldLabel>
                 <SegmentedControl
-                  onSelect={(timeRange) => setFilters((current) => ({
-                    ...current,
-                    timeRange: timeRange as GenerationTimeRange,
-                  }))}
-                  options={([
-                    ["7d", "generation.time.7"],
-                    ["30d", "generation.time.30"],
-                    ["90d", "generation.time.90"],
-                    ["all", "generation.time.all"],
-                  ] as const).map(([id, key]) => ({ id, label: t(key) }))}
-                  selectedId={filters.timeRange}
+                  onSelect={filters.projectPrompts.enabled ? (projectId) => {
+                    if (projectId === "__inbox__") {
+                      setFilters((current) => ({
+                        ...current,
+                        projectPrompts: {
+                          ...current.projectPrompts,
+                          includeInbox: !current.projectPrompts.includeInbox,
+                        },
+                      }));
+                      return;
+                    }
+                    setFilters((current) => ({
+                      ...current,
+                      projectPrompts: {
+                        ...current.projectPrompts,
+                        projectIds: toggleValue(current.projectPrompts.projectIds, projectId),
+                      },
+                    }));
+                  } : undefined}
+                  options={[
+                    ...projectOptions,
+                    { id: "__inbox__", label: t("generation.projects.inbox") },
+                  ]}
+                  selectedIds={[
+                    ...filters.projectPrompts.projectIds,
+                    ...(filters.projectPrompts.includeInbox ? ["__inbox__"] : []),
+                  ]}
                   small
                   theme={theme}
                 />
-              </View>
+                {!filters.projectPrompts.projectIds.length && !filters.projectPrompts.includeInbox ? (
+                  <Hint theme={theme}>{t("generation.projects.none")}</Hint>
+                ) : null}
+              </GenerationContextSourceCard>
 
-              <View style={{ gap: 6 }}>
+              <GenerationContextSourceCard
+                accessibilityLabel={t("generation.sources.tags.label")}
+                compact={compact}
+                enabled={filters.tagPrompts.enabled}
+                help={t("generation.sources.tags.help")}
+                onEnabledChange={(enabled) => setFilters((current) => ({
+                  ...current,
+                  tagPrompts: { ...current.tagPrompts, enabled },
+                }))}
+                onTimeRangeChange={(timeRange) => setFilters((current) => ({
+                  ...current,
+                  tagPrompts: { ...current.tagPrompts, timeRange },
+                }))}
+                theme={theme}
+                timeLabel={t("generation.time.label")}
+                timeOptions={timeRangeOptions}
+                timeRange={filters.tagPrompts.timeRange}
+                title={t("generation.sources.tags.label")}
+              >
                 <FieldLabel theme={theme}>{t("generation.tags.label")}</FieldLabel>
                 {tagOptions.length ? (
                   <SegmentedControl
-                    onSelect={(tag) => setFilters((current) => ({
+                    onSelect={filters.tagPrompts.enabled ? (tag) => setFilters((current) => ({
                       ...current,
-                      tagPaths: toggleValue(current.tagPaths, tag),
-                    }))}
+                      tagPrompts: {
+                        ...current.tagPrompts,
+                        tagPaths: toggleValue(current.tagPrompts.tagPaths, tag),
+                      },
+                    })) : undefined}
                     options={tagOptions.map((tag) => ({ id: tag, label: tag }))}
-                    selectedIds={filters.tagPaths}
+                    selectedIds={filters.tagPrompts.tagPaths}
                     small
                     theme={theme}
                   />
                 ) : null}
-                {!filters.tagPaths.length ? <Hint theme={theme}>{t("generation.tags.none")}</Hint> : null}
-              </View>
-
-              <View style={{ alignItems: "center", flexDirection: "row", gap: 12 }}>
-                <View style={{ flex: 1, gap: 3 }}>
-                  <Text style={{ color: theme.colors.foreground, fontSize: font.body, fontWeight: "500" }}>
-                    {t("generation.projects.cross")}
-                  </Text>
-                  <Hint theme={theme}>{t("generation.projects.same")}</Hint>
-                </View>
-                <Switch
-                  accessibilityLabel={t("generation.projects.cross")}
-                  accessibilityRole="switch"
-                  onValueChange={(crossProject) => setFilters((current) => ({
-                    ...current,
-                    crossProject,
-                    projectIds: crossProject && detail.summary.scope.projectId
-                      ? [detail.summary.scope.projectId]
-                      : [],
-                    includeInbox: false,
-                  }))}
-                  thumbColor={filters.crossProject ? theme.colors.accentForeground : theme.colors.foregroundMuted}
-                  trackColor={{ false: palette.controlStrong, true: theme.colors.accent }}
-                  value={filters.crossProject}
-                />
-              </View>
-              {filters.crossProject ? (
-                <View style={{ gap: 6 }}>
-                  <FieldLabel theme={theme}>{t("generation.projects.label")}</FieldLabel>
-                  <SegmentedControl
-                    onSelect={(projectId) => {
-                      if (projectId === "__inbox__") {
-                        setFilters((current) => ({ ...current, includeInbox: !current.includeInbox }));
-                        return;
-                      }
-                      setFilters((current) => ({
-                        ...current,
-                        projectIds: toggleValue(current.projectIds, projectId),
-                      }));
-                    }}
-                    options={[
-                      ...projectOptions,
-                      { id: "__inbox__", label: t("generation.projects.inbox") },
-                    ]}
-                    selectedIds={[
-                      ...filters.projectIds,
-                      ...(filters.includeInbox ? ["__inbox__"] : []),
-                    ]}
-                    small
-                    theme={theme}
-                  />
-                </View>
-              ) : null}
+                {!filters.tagPrompts.tagPaths.length ? (
+                  <Hint theme={theme}>{t("generation.tags.none")}</Hint>
+                ) : null}
+              </GenerationContextSourceCard>
 
               <Card theme={theme}>
                 <View style={{ alignItems: "center", flexDirection: "row", gap: 12 }}>
@@ -824,6 +838,9 @@ export function PromptAgentActions({
                       {t("generation.projectRead.label")}
                     </Text>
                     <Hint theme={theme}>{t("generation.projectRead.help")}</Hint>
+                    {previewQuery.data ? (
+                      <ProtectionNotice protection={previewQuery.data.preview.protection} theme={theme} />
+                    ) : null}
                   </View>
                   <Switch
                     accessibilityLabel={t("generation.projectRead.label")}
@@ -834,7 +851,6 @@ export function PromptAgentActions({
                     value={allowProjectRead}
                   />
                 </View>
-                <Hint danger theme={theme}>{t("generation.security.warning")}</Hint>
               </Card>
 
               {previewQuery.isPending && previewQuery.fetchStatus === "fetching" ? (
@@ -855,7 +871,6 @@ export function PromptAgentActions({
                         ?? t("settings.generation.defaultThinking"),
                     })}
                   </Hint>
-                  <ProtectionNotice protection={previewQuery.data.preview.protection} theme={theme} />
                 </Card>
               ) : null}
               {!relatedConfigured ? <Hint danger theme={theme}>{t("generation.disabled.settings")}</Hint> : null}
@@ -872,10 +887,8 @@ export function PromptAgentActions({
                 }}
                 theme={theme}
               />
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+        </ScrollView>
+      </NativeDialog>
     </View>
   );
 }

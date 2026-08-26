@@ -1,11 +1,13 @@
 import { type PluginTheme } from "@getpaseo/plugin";
 import { useMemo, useState, type ReactNode } from "react";
 import {
+  Modal,
   Pressable,
   Text,
   TextInput,
   View,
   type StyleProp,
+  type TextInputProps,
   type TextStyle,
   type ViewStyle,
 } from "react-native";
@@ -175,6 +177,101 @@ export function Description({ theme, children }: { theme: PluginTheme; children:
   return showDescriptions ? <Hint theme={theme}>{children}</Hint> : null;
 }
 
+/** Shared modal shell for Prompt Studio dialogs and settings. */
+export function NativeDialog({
+  accessibilityLabel,
+  children,
+  compact,
+  description,
+  maxWidth = 680,
+  onClose,
+  theme,
+  title,
+  visible,
+}: {
+  accessibilityLabel: string;
+  children: ReactNode;
+  compact: boolean;
+  description?: string;
+  maxWidth?: number;
+  onClose: () => void;
+  theme: PluginTheme;
+  title: string;
+  visible: boolean;
+}) {
+  const palette = useMemo(() => paletteOf(theme), [theme]);
+  return (
+    <Modal
+      animationType="fade"
+      onRequestClose={onClose}
+      transparent
+      visible={visible}
+    >
+      <View
+        style={{
+          alignItems: "center",
+          backgroundColor: palette.controlStrong,
+          flex: 1,
+          justifyContent: "center",
+          padding: compact ? 12 : 24,
+        }}
+      >
+        <Pressable
+          accessibilityLabel={accessibilityLabel}
+          accessibilityRole="button"
+          onPress={onClose}
+          style={{ bottom: 0, left: 0, position: "absolute", right: 0, top: 0 }}
+        />
+        <View
+          accessibilityViewIsModal
+          style={{
+            backgroundColor: theme.colors.surface0,
+            borderColor: palette.borderStrong,
+            borderRadius: uiMetrics.surfaceRadius,
+            borderWidth: 1,
+            elevation: 12,
+            gap: 12,
+            maxHeight: "90%",
+            maxWidth,
+            padding: compact ? 12 : 16,
+            shadowColor: theme.colors.foreground,
+            shadowOffset: { height: 4, width: 0 },
+            shadowOpacity: 0.18,
+            shadowRadius: 12,
+            width: "100%",
+          }}
+        >
+          <View style={{ alignItems: "center", flexDirection: "row", gap: 10 }}>
+            <View style={{ flex: 1, gap: 3 }}>
+              <Text
+                style={{
+                  color: theme.colors.foreground,
+                  fontSize: font.title,
+                  fontWeight: "500",
+                  lineHeight: 22,
+                }}
+              >
+                {title}
+              </Text>
+              {description ? <Hint theme={theme}>{description}</Hint> : null}
+            </View>
+            <NativeButton
+              accessibilityLabel={accessibilityLabel}
+              label="×"
+              onPress={onClose}
+              small
+              style={{ minWidth: uiMetrics.compactControlHeight, paddingHorizontal: 0 }}
+              theme={theme}
+              variant="ghost"
+            />
+          </View>
+          {children}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 export function Card({
   theme,
   danger,
@@ -289,6 +386,7 @@ export function NativeTextInput({
   autoFocus,
   editable = true,
   multiline,
+  keyboardType,
   small,
   variant = "filled",
   style,
@@ -302,6 +400,7 @@ export function NativeTextInput({
   autoFocus?: boolean;
   editable?: boolean;
   multiline?: boolean;
+  keyboardType?: TextInputProps["keyboardType"];
   small?: boolean;
   variant?: "filled" | "bare";
   style?: StyleProp<TextStyle>;
@@ -315,6 +414,7 @@ export function NativeTextInput({
       accessibilityLabel={accessibilityLabel}
       autoFocus={autoFocus}
       editable={editable}
+      keyboardType={keyboardType}
       multiline={multiline}
       onBlur={() => setFocused(false)}
       onChangeText={onChangeText}

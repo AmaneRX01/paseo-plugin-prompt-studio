@@ -243,6 +243,5 @@ export type ProjectLink = z.infer<typeof projectLinkSchema>;
 export type ProjectMap = z.infer<typeof projectMapSchema>;
 export type VaultMigrationJournal = z.infer<typeof vaultMigrationJournalSchema>;
 export type DraftMeta = z.infer<typeof draftMetaSchema>;
-export type MoveJournal = z.infer<typeof moveJournalSchema>;
 export type DeleteJournal = z.infer<typeof deleteJournalSchema>;
 export type GenerationApplyJournal = z.infer<typeof generationApplyJournalSchema>;

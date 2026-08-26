@@ -19,10 +19,11 @@ The product name is **Prompt Studio for Paseo**. The repository and npm package 
 - Inbox or Project scope without tying a draft to a specific Workspace or Agent.
 - Debounced autosave with optimistic version and content-hash checks, external-edit detection, and recoverable checkpoints.
 - A server-enforced `draft ⇄ ready` lifecycle. Marking a draft ready creates a checkpoint; changing its title or Markdown returns it to draft.
-- Hierarchical tags such as `Research/AI`, with autocomplete, case-insensitive deduplication, tree filtering, global rename/merge, and bulk assignment.
+- Sidebar multi-selection with select-all-matching, batch lifecycle actions (Draft, Ready, Archive, Restore), and bulk tag assignment/removal.
+- Hierarchical tags such as `Research/AI`, with autocomplete, case-insensitive deduplication, tree filtering, and global rename/merge.
 - Immutable send snapshots, stable `clientMessageId` reuse, safe retries, and Agent timeline reconciliation.
 - Project-scoped Prompt Agents for related-Prompt optimization and format-only cleanup, with deterministic context counts, budget previews, durable recovery, and conflict candidates.
-- Independent provider/model/thinking settings for both generation tasks, plus provider-native read-only controls and explicit disclosure where Paseo 0.5.1 cannot enforce a readable-path allowlist.
+- Independent provider/model/thinking settings for both generation tasks, plus provider-native read-only controls and concise protection-level labels.
 - Archive and restore support, plus journaled permanent deletion for eligible archived drafts.
 - A disposable derived catalog that can always be rebuilt from canonical Markdown and JSON.
 - English and Chinese UI, responsive desktop/compact layouts, and Paseo light/dark theme support.
@@ -70,7 +71,11 @@ Use `paseo plugin reload` for source changes; do not restart the daemon.
 
 Open **Prompt Studio** from the Paseo sidebar or Command Center. Create a draft, edit its title and Markdown, and optionally organize it with hierarchical tags. Autosave reports pending, saved, conflict, and failure states.
 
-For a saved Draft assigned to a Project, use **Optimize from related Prompts** to preview and select tag, time, history, and cross-Project context. The preview reports eligible and actually included Prompt/version counts and whether the model budget removed whole reference versions. Project-file access is off for every run unless you explicitly enable its read-only option. Use the smaller format action for prose and Markdown cleanup without Prompt history, related Drafts, or Project files. Configure the provider, model, and thinking option for each task independently from Settings.
+Choose **Select** in the Draft sidebar to select individual rows or every Draft matching the current filters. The batch panel can mark eligible selections as Draft or Ready, archive or restore them, and add or remove tags. Mixed-status selections are supported: each lifecycle action shows how many selected Drafts are eligible, retains every Draft's pre-archive state on restore, and reports partial failures instead of hiding them.
+
+Below the Markdown editor, use **Add boilerplate** to append a saved reusable phrase to the current Prompt. Boilerplates are user-editable, shared across UI languages, and begin with three common English prompt fragments.
+
+For a saved Draft assigned to a Project, use **Prompt optimization** to configure three independent reference sources: checkpoints from the current Draft, current Prompt bodies from selected Projects/Inbox, and current Prompt bodies matching selected tags. Every source has its own enabled state and time range; Project and tag sources are combined with OR semantics and duplicate bodies are removed. Settings defines three ascending day-range stops, defaulting to 3, 7, and 14 days, while **All time** remains a fixed final stop. The preview reports eligible and actually included Prompt/version counts and whether the model budget omitted whole references. Project-file access is off for every run unless you explicitly enable its read-only option; the provider protection label is shown with that permission. Use **Quick optimization** for prose and Markdown cleanup without Prompt history, related Drafts, or Project files. Configure the provider, model, and thinking option for each task independently from Settings.
 
 Generation runs are durable and single-flight per Draft. While one is unresolved, Prompt Studio locks mutations and sending for that Draft but lets you browse other Drafts. A successful reply becomes the latest body, creates an undo checkpoint, marks the Draft as generated, and returns `ready` to `draft`. If the Draft changed while the Agent was running, the reply is retained as a conflict candidate and is never applied without an explicit latest-version check.
 

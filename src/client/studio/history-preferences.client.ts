@@ -1,5 +1,11 @@
-import { useMemo, useSyncExternalStore } from "react";
+import { useMemo } from "react";
 import type { Checkpoint, Snapshot } from "../../shared/contracts.shared";
+import {
+  createClientPreferenceStore,
+  readClientStorage,
+  useClientPreference,
+  writeClientStorage,
+} from "../preferences-store.client";
 
 export const HISTORY_LIMIT_OPTIONS = [3, 5, 10, 20] as const;
 export type HistoryLimit = (typeof HISTORY_LIMIT_OPTIONS)[number];
@@ -27,7 +33,7 @@ function isHistoryLimit(value: unknown): value is HistoryLimit {
 
 function readInitialState(): HistoryPreferencesState {
   try {
-    const raw = (globalThis as { localStorage?: Storage }).localStorage?.getItem(STORAGE_KEY);
+    const raw = readClientStorage(STORAGE_KEY);
     if (!raw) return DEFAULT_STATE;
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const rawStars = parsed.checkpointStarsByDraft;
@@ -56,63 +62,52 @@ function readInitialState(): HistoryPreferencesState {
   }
 }
 
-let currentState = readInitialState();
-const listeners = new Set<() => void>();
-
-function emit() {
-  for (const listener of listeners) listener();
-}
+const historyStore = createClientPreferenceStore(
+  readInitialState(),
+  (state) => writeClientStorage(STORAGE_KEY, JSON.stringify(state)),
+);
 
 function replaceState(nextState: HistoryPreferencesState) {
-  currentState = nextState;
-  try {
-    (globalThis as { localStorage?: Storage }).localStorage?.setItem(STORAGE_KEY, JSON.stringify(nextState));
-  } catch {
-    // Persistence is best-effort on native runtimes without web storage.
-  }
-  emit();
+  historyStore.set(nextState);
 }
 
 export function getHistoryPreferences(): HistoryPreferencesState {
-  return currentState;
+  return historyStore.getSnapshot();
 }
 
 export function setSnapshotLimit(snapshotLimit: HistoryLimit) {
-  if (snapshotLimit === currentState.snapshotLimit) return;
-  replaceState({ ...currentState, snapshotLimit });
+  const current = historyStore.getSnapshot();
+  if (snapshotLimit === current.snapshotLimit) return;
+  replaceState({ ...current, snapshotLimit });
 }
 
 export function setCheckpointLimit(checkpointLimit: HistoryLimit) {
-  if (checkpointLimit === currentState.checkpointLimit) return;
-  replaceState({ ...currentState, checkpointLimit });
+  const current = historyStore.getSnapshot();
+  if (checkpointLimit === current.checkpointLimit) return;
+  replaceState({ ...current, checkpointLimit });
 }
 
 export function setStarredCheckpointsCountTowardLimit(starredCheckpointsCountTowardLimit: boolean) {
-  if (starredCheckpointsCountTowardLimit === currentState.starredCheckpointsCountTowardLimit) return;
-  replaceState({ ...currentState, starredCheckpointsCountTowardLimit });
+  const current = historyStore.getSnapshot();
+  if (starredCheckpointsCountTowardLimit === current.starredCheckpointsCountTowardLimit) return;
+  replaceState({ ...current, starredCheckpointsCountTowardLimit });
 }
 
 export function toggleCheckpointStar(draftId: string, checkpointId: string) {
   if (!DRAFT_ID.test(draftId) || !CHECKPOINT_ID.test(checkpointId)) return;
-  const current = currentState.checkpointStarsByDraft[draftId] ?? [];
-  const next = current.includes(checkpointId)
-    ? current.filter((id) => id !== checkpointId)
-    : [...current, checkpointId];
-  const checkpointStarsByDraft = { ...currentState.checkpointStarsByDraft };
+  const state = historyStore.getSnapshot();
+  const currentStars = state.checkpointStarsByDraft[draftId] ?? [];
+  const next = currentStars.includes(checkpointId)
+    ? currentStars.filter((id) => id !== checkpointId)
+    : [...currentStars, checkpointId];
+  const checkpointStarsByDraft = { ...state.checkpointStarsByDraft };
   if (next.length) checkpointStarsByDraft[draftId] = next;
   else delete checkpointStarsByDraft[draftId];
-  replaceState({ ...currentState, checkpointStarsByDraft });
+  replaceState({ ...state, checkpointStarsByDraft });
 }
 
 export function useHistoryPreferences(draftId?: string) {
-  const state = useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    getHistoryPreferences,
-    getHistoryPreferences,
-  );
+  const state = useClientPreference(historyStore);
   const starredCheckpointIds = useMemo(
     () => new Set(draftId ? state.checkpointStarsByDraft[draftId] ?? [] : []),
     [draftId, state.checkpointStarsByDraft],

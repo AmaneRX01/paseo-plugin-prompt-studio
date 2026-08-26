@@ -76,12 +76,33 @@ test("the editor title row uses one compact-toolbar height", () => {
   assert.match(editorHeader, /variant="bare"/);
 });
 
+test("floating dialogs share one theme, type scale, and close treatment", () => {
+  const uiSource = readFileSync(uiPath, "utf8");
+  const dialog = componentSource(uiSource, "export function NativeDialog", "export function Card");
+  const dialogSources = [
+    readFileSync(join(clientRoot, "studio", "studio-header.client.tsx"), "utf8"),
+    readFileSync(join(clientRoot, "studio", "prompt-agent-actions.client.tsx"), "utf8"),
+    readFileSync(join(clientRoot, "studio", "boilerplate-picker.client.tsx"), "utf8"),
+  ];
+
+  assert.match(dialog, /backgroundColor: theme\.colors\.surface0/);
+  assert.match(dialog, /borderColor: palette\.borderStrong/);
+  assert.match(dialog, /fontSize: font\.title/);
+  assert.match(dialog, /fontWeight: "500"/);
+  assert.match(dialog, /label="×"/);
+  for (const source of dialogSources) {
+    assert.match(source, /<NativeDialog/);
+    assert.doesNotMatch(source, /<Modal/);
+    assert.doesNotMatch(source, /accessibilityViewIsModal/);
+  }
+});
+
 test("the corner settings menu owns language, descriptions, and history limits", () => {
   const headerSource = readFileSync(join(clientRoot, "studio", "studio-header.client.tsx"), "utf8");
   const uiSource = readFileSync(uiPath, "utf8");
 
   assert.match(headerSource, /accessibilityLabel=\{t\("settings\.open"\)\}/);
-  assert.match(headerSource, /<Modal/);
+  assert.match(headerSource, /<NativeDialog/);
   assert.match(headerSource, /<SegmentedControl/);
   assert.match(headerSource, /<Switch/);
   assert.match(headerSource, /onValueChange=\{setShowDescriptions\}/);
@@ -96,7 +117,22 @@ test("the corner settings menu owns language, descriptions, and history limits",
 
 test("prompt agent actions keep agent replies behind server reconciliation", () => {
   const actionSource = readFileSync(join(clientRoot, "studio", "prompt-agent-actions.client.tsx"), "utf8");
+  const boilerplatePickerSource = readFileSync(
+    join(clientRoot, "studio", "boilerplate-picker.client.tsx"),
+    "utf8",
+  );
+  const boilerplatePreferencesSource = readFileSync(
+    join(clientRoot, "studio", "boilerplate-preferences.client.ts"),
+    "utf8",
+  );
+  const contextControlsSource = readFileSync(
+    join(clientRoot, "studio", "generation-context-controls.client.tsx"),
+    "utf8",
+  );
+  const draftListSource = readFileSync(join(clientRoot, "studio", "draft-list-pane.client.tsx"), "utf8");
   const settingsSource = readFileSync(join(clientRoot, "studio", "generation-settings.client.tsx"), "utf8");
+  const studioSource = readFileSync(join(clientRoot, "studio.client.tsx"), "utf8");
+  const i18nSource = readFileSync(join(clientRoot, "i18n.client.ts"), "utf8");
 
   assert.match(actionSource, /generationPreviewRpc/);
   assert.match(actionSource, /generationStartRpc/);
@@ -108,19 +144,65 @@ test("prompt agent actions keep agent replies behind server reconciliation", () 
   assert.match(actionSource, /job\.status === "prepared"/);
   assert.doesNotMatch(actionSource, /responseMarkdown:\s*/);
   assert.match(actionSource, /allowProjectRead/);
-  assert.match(actionSource, /generation\.security\.warning/);
-  assert.match(actionSource, /accessibilityViewIsModal/);
+  assert.doesNotMatch(actionSource, /generation\.security\.warning/);
+  assert.doesNotMatch(actionSource, /protection\.warning/);
+  assert.doesNotMatch(i18nSource, /这是纵深防护|defense in depth/);
+  assert.match(actionSource, /<NativeDialog/);
   assert.match(actionSource, /accessibilityRole="switch"/);
-  assert.match(actionSource, /contentContainerStyle=\{\{ gap: 14, paddingBottom: 2 \}\}/);
+  assert.equal(actionSource.match(/<GenerationContextSourceCard/g)?.length, 3);
+  assert.match(actionSource, /filters\.targetCheckpoints\.timeRange/);
+  assert.match(actionSource, /filters\.projectPrompts\.timeRange/);
+  assert.match(actionSource, /filters\.tagPrompts\.timeRange/);
+  assert.doesNotMatch(actionSource, /filters\.(?:includeHistory|crossProject|timeRange)/);
+  assert.match(actionSource, /settingsQuery\.data\?\.settings\.contextTimeRangeDays/);
+  assert.match(actionSource, /generation\.time\.days/);
+  assert.doesNotMatch(actionSource, /generation\.time\.(?:30|90)/);
+  assert.match(contextControlsSource, /accessibilityRole="checkbox"/);
+  assert.match(contextControlsSource, /accessibilityRole="adjustable"/);
+  assert.match(contextControlsSource, /onResponderMove=\{selectAt\}/);
+  assert.match(actionSource, /contentContainerStyle=\{\{ gap: 14, paddingBottom: 2, paddingRight:/);
   assert.match(actionSource, /tagPaths: \[\.\.\.detail\.summary\.tags\]/);
   assert.match(actionSource, /task: "format", contextFilters: null, projectRead: false/);
-  assert.match(actionSource, /detail\.summary\.contentOrigin\.kind === "generated"/);
+  assert.doesNotMatch(actionSource, /contentOrigin|editor\.generated/);
+  assert.doesNotMatch(draftListSource, /contentOrigin|editor\.generated/);
+  assert.doesNotMatch(i18nSource, /"editor\.generated"/);
+  assert.match(actionSource, /borderTopColor: palette\.border/);
+  assert.doesNotMatch(actionSource, /backgroundColor: palette\.raised/);
+  assert.ok(
+    actionSource.indexOf("<BoilerplatePicker") < actionSource.indexOf('label={startMutation.isPending'),
+    "the boilerplate action must be the leftmost prompt action",
+  );
+  assert.match(boilerplatePickerSource, /replaceBoilerplates/);
+  assert.match(boilerplatePickerSource, /onInsert\(boilerplate\)/);
+  assert.match(boilerplatePickerSource, /<NativeDialog/);
+  assert.match(boilerplatePickerSource, /showsVerticalScrollIndicator/);
+  assert.match(boilerplatePickerSource, /persistentScrollbar/);
+  assert.match(boilerplatePickerSource, /maxHeight: compact \? 300 : 420/);
+  assert.match(boilerplatePreferencesSource, /prompt-studio\.boilerplates\.v1/);
+  assert.match(studioSource, /onAppendBoilerplate=\{appendSavedBoilerplate\}/);
+  assert.ok(
+    studioSource.indexOf('accessibilityLabel={t("editor.markdown.placeholder")}')
+      < studioSource.indexOf("<PromptAgentActions"),
+    "prompt optimization actions must render below the Markdown editor",
+  );
+  assert.match(i18nSource, /"generation\.related\.action": "Prompt 优化"/);
+  assert.match(i18nSource, /"generation\.format\.action": "快速优化"/);
   assert.match(settingsSource, /generationSettingsUpdateRpc/);
+  assert.match(settingsSource, /<TimeRangeSettingsEditor/);
+  assert.match(settingsSource, /contextTimeRangeDays/);
+  assert.match(settingsSource, /keyboardType="number-pad"/);
   assert.match(settingsSource, /task="related"/);
   assert.match(settingsSource, /task="format"/);
   assert.match(settingsSource, /useQuery\(/);
   assert.match(settingsSource, /useMutation\(/);
   assert.doesNotMatch(settingsSource, /localStorage/);
+  assert.match(actionSource, /previewQuery\.data \? \([^]*<ProtectionNotice/);
+  assert.doesNotMatch(actionSource, /allowProjectRead && previewQuery\.data/);
+  assert.match(actionSource, /<ProtectionNotice protection=\{job\.protection\}/);
+  assert.match(
+    actionSource,
+    /\{previewQuery\.data \? \([^]*<ProtectionNotice protection=\{previewQuery\.data\.preview\.protection\}/,
+  );
 });
 
 test("the Command Center exposes one persistent Scratchpad without Quick Draft simulations", () => {

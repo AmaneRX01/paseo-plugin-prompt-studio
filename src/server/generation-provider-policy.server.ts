@@ -74,15 +74,10 @@ export function buildGenerationAgentPolicy(input: {
           },
         },
       },
-      // Codex's read-only sandbox prevents writes and network access, but it
-      // has no readable-root allowlist and cannot disable every Paseo-injected
-      // MCP tool. The complete access boundary therefore remains behavioral.
       protection: {
         level: "behavioral-only",
         projectRead: input.allowProjectRead,
-        warning: input.allowProjectRead
-          ? "Codex read-only prevents writes, but it has no readable-root allowlist and cannot disable every Paseo-injected MCP tool."
-          : "Codex cannot natively disable every file read or Paseo-injected MCP tool; no-access rules are also enforced as instructions.",
+        warning: null,
       },
     };
   }
@@ -96,9 +91,7 @@ export function buildGenerationAgentPolicy(input: {
       protection: {
         level: input.allowProjectRead ? "behavioral-only" : "native-policy",
         projectRead: input.allowProjectRead,
-        warning: input.allowProjectRead
-          ? "Kimi does not expose a path allowlist; project-only reads are enforced as an instruction."
-          : null,
+        warning: null,
       },
     };
   }
@@ -132,7 +125,7 @@ export function buildGenerationAgentPolicy(input: {
       protection: {
         level: "behavioral-only",
         projectRead: input.allowProjectRead,
-        warning: "Claude filesystem/tool policy is native, but Paseo-injected MCP tools are not a host security boundary.",
+        warning: null,
       },
     };
   }
@@ -169,9 +162,7 @@ export function buildGenerationAgentPolicy(input: {
       protection: {
         level: input.allowProjectRead ? "behavioral-only" : "native-policy",
         projectRead: input.allowProjectRead,
-        warning: input.allowProjectRead
-          ? "OpenCode limits built-in tools to the Project, but injected MCP tools remain a behavioral boundary."
-          : null,
+        warning: null,
       },
     };
   }
@@ -181,7 +172,7 @@ export function buildGenerationAgentPolicy(input: {
     protection: {
       level: "behavioral-only",
       projectRead: input.allowProjectRead,
-      warning: "This provider has no Paseo-native generation safety adapter; restrictions are behavioral only.",
+      warning: null,
     },
   };
 }

@@ -98,6 +98,7 @@ import {
   acquireCrossProcessFileLock,
   GenerationRepository,
 } from "./storage/generations.server";
+import { KeyedLockQueue } from "./storage/locking.server";
 import {
   VaultRepository,
   type ResolvedSourceProject as VaultResolvedSourceProject,
@@ -315,7 +316,7 @@ export class PromptStudioStore {
   readonly transactionsPath: string;
   private readonly vault: VaultRepository;
   private readonly generations: GenerationRepository;
-  private readonly locks = new Map<string, Promise<void>>();
+  private readonly locks = new KeyedLockQueue();
   private initialization: Promise<void> | null = null;
   private catalogCache: CatalogResult | null = null;
   private readonly now: () => Date;
@@ -525,23 +526,11 @@ export class PromptStudioStore {
 
   private async withLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
     await this.initialize();
-    const prior = this.locks.get(key) ?? Promise.resolve();
-    let releaseQueue!: () => void;
-    const queued = new Promise<void>((resolve) => {
-      releaseQueue = resolve;
-    });
-    const chain = prior.then(() => queued);
-    this.locks.set(key, chain);
-    await prior;
-    let releaseFile: (() => Promise<void>) | null = null;
-    try {
-      releaseFile = await this.acquireFileLock(key);
-      return await operation();
-    } finally {
-      if (releaseFile) await releaseFile();
-      releaseQueue();
-      if (this.locks.get(key) === chain) this.locks.delete(key);
-    }
+    return this.locks.run(
+      key,
+      () => this.acquireFileLock(key),
+      operation,
+    );
   }
 
   private async readPlacement(containerId: ContainerId): Promise<Placement> {
@@ -617,12 +606,6 @@ export class PromptStudioStore {
         summary: await this.containerSummary(record),
       };
     });
-  }
-
-  async findContainerForProject(projectId: string): Promise<ContainerSummary | null> {
-    await this.initialize();
-    const record = await this.vault.findContainerForProject(projectId);
-    return record ? this.containerSummary(record) : null;
   }
 
   async findContainerByRoot(rootPath: string): Promise<ContainerSummary | null> {

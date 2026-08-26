@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type PluginTheme, usePaseo, useRpc } from "@getpaseo/plugin";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -12,6 +12,7 @@ import {
   catalogScanRpc,
   containerEnsureRpc,
   draftAutosaveRpc,
+  draftBatchTransitionRpc,
   draftCreateRpc,
   draftDeleteRpc,
   draftGetRpc,
@@ -23,6 +24,7 @@ import {
   tagRenameRpc,
   type CatalogScanResult,
   type DraftDetail,
+  type DraftSummary,
   type DraftScopeTarget,
 } from "../shared/contracts.shared";
 import { canTransitionDraftStatus, draftStatuses, isSendableDraftStatus } from "../shared/draft-lifecycle.shared";
@@ -45,8 +47,15 @@ import {
 import { CheckpointView } from "./studio/checkpoint-view.client";
 import {
   DraftListPane,
-  type DraftBulkTagLabels,
+  type DraftSelectionLabels,
 } from "./studio/draft-list-pane.client";
+import {
+  planBatchDraftTransitions,
+  type BatchDraftAction,
+} from "./studio/batch-selection.client";
+import {
+  appendBoilerplate,
+} from "./studio/boilerplate-preferences.client";
 import {
   selectRecentSnapshots,
   selectVisibleCheckpoints,
@@ -142,7 +151,7 @@ function tagControlLabels(t: Translate): Partial<TagControlLabels> {
   };
 }
 
-function bulkTagLabels(t: Translate): DraftBulkTagLabels {
+function selectionLabels(t: Translate): DraftSelectionLabels {
   return {
     start: t("drafts.bulk.start"),
     done: t("drafts.bulk.done"),
@@ -150,11 +159,17 @@ function bulkTagLabels(t: Translate): DraftBulkTagLabels {
     clearSelection: t("drafts.bulk.clear"),
     selected: (count) => t("drafts.bulk.selected", { count }),
     selectDraft: (title) => t("drafts.bulk.select", { title }),
+    lifecycleTitle: t("drafts.bulk.lifecycle"),
+    setDraft: (count) => t("drafts.bulk.setDraft", { count }),
+    setReady: (count) => t("drafts.bulk.setReady", { count }),
+    archive: (count) => t("drafts.bulk.archive", { count }),
+    restore: (count) => t("drafts.bulk.restore", { count }),
+    tagsTitle: t("drafts.bulk.tags"),
     tagsPlaceholder: t("drafts.bulk.tags.placeholder"),
     add: t("drafts.bulk.add"),
     remove: t("drafts.bulk.remove"),
     applying: t("drafts.bulk.applying"),
-    empty: t("drafts.bulk.empty"),
+    emptySelection: t("drafts.bulk.emptySelection"),
     error: (message) => t("drafts.bulk.error", { error: message }),
   };
 }
@@ -242,6 +257,7 @@ function DraftEditor({
   projects,
   tagSuggestions,
   globalTagsBusy,
+  globalLifecycleBusy,
   onBack,
   onCatalogRefresh,
   onCatalogDraftUpdated,
@@ -261,6 +277,7 @@ function DraftEditor({
   projects: ProjectChoice[];
   tagSuggestions: TagSuggestion[];
   globalTagsBusy: boolean;
+  globalLifecycleBusy: boolean;
   onBack?: () => void;
   onCatalogRefresh: () => void;
   onCatalogDraftUpdated: (draft: DraftDetail) => void;
@@ -335,6 +352,7 @@ function DraftEditor({
     ? pendingScope.projectId
     : undefined;
   const scopePending = pendingScopeProjectId !== undefined;
+  const globalMutationBusy = globalTagsBusy || globalLifecycleBusy;
 
   const fingerprint = JSON.stringify([title, markdown]);
   latestFingerprint.current = fingerprint;
@@ -344,7 +362,7 @@ function DraftEditor({
   useEffect(() => {
     const blockState: NavigationBlockState | null = dispatchBusy
       ? "dispatching"
-      : lifecycleBusy || deleteConfirming || tagsBusy || globalTagsBusy
+      : lifecycleBusy || deleteConfirming || tagsBusy || globalMutationBusy
         ? "updating"
       : checkpointBusy
         ? "updating"
@@ -354,7 +372,7 @@ function DraftEditor({
           ? null
           : saveState;
     onNavigationStateChange(draftId, blockState);
-  }, [checkpointBusy, deleteConfirming, dispatchBusy, draftId, globalTagsBusy, lifecycleBusy, onNavigationStateChange, saveState, scopeBusy, scopePending, tagsBusy]);
+  }, [checkpointBusy, deleteConfirming, dispatchBusy, draftId, globalMutationBusy, lifecycleBusy, onNavigationStateChange, saveState, scopeBusy, scopePending, tagsBusy]);
 
   useEffect(() => {
     const detail = query.data?.draft;
@@ -430,7 +448,7 @@ function DraftEditor({
   }, [autosave, contentHash, draftId, fingerprint, markdown, onCatalogDraftUpdated, queryClient, saveState, title, version]);
 
   async function changeTags(nextValues: string[]) {
-    if (tagsBusy || globalTagsBusy) return;
+    if (tagsBusy || globalMutationBusy) return;
     const requested = normalizeTags(nextValues);
     if (sameTagSet(tags, requested)) return;
     const previous = tags;
@@ -478,6 +496,12 @@ function DraftEditor({
     if (saveState !== "saving") setSaveState("dirty");
   }
 
+  const appendSavedBoilerplate = useCallback((boilerplate: string) => {
+    setCheckpointNotice(null);
+    setMarkdown((current) => appendBoilerplate(current, boilerplate));
+    setSaveState((current) => current === "saving" ? current : "dirty");
+  }, []);
+
   function preserveLatestTags(updated: DraftDetail): DraftDetail {
     const cached = queryClient.getQueryData<{ draft: DraftDetail }>(queryKey);
     const currentTags = normalizeTags(cached?.draft.summary.tags ?? latestTags.current);
@@ -507,7 +531,7 @@ function DraftEditor({
   }
 
   function changeScope(projectId: string | null) {
-    if (!query.data || saveState !== "saved" || scopeBusy || tagsBusy || globalTagsBusy || generationBusy) return;
+    if (!query.data || saveState !== "saved" || scopeBusy || tagsBusy || globalMutationBusy || generationBusy) return;
     const canonicalProjectId = query.data.draft.summary.scope.projectId;
     if (projectId === canonicalProjectId) {
       const selection = scopeChangeQueue.current?.select(canonicalProjectId, projectId, () => {});
@@ -531,7 +555,7 @@ function DraftEditor({
   }
 
   async function changeStatus(targetStatus: DraftStatus) {
-    if (!query.data || saveState !== "saved" || tagsBusy || globalTagsBusy || generationBusy) return;
+    if (!query.data || saveState !== "saved" || tagsBusy || globalMutationBusy || generationBusy) return;
     setLifecycleBusy(true);
     setLifecycleError(null);
     try {
@@ -558,7 +582,7 @@ function DraftEditor({
   }
 
   async function permanentlyDelete() {
-    if (!query.data || deleteConfirmation !== draftId || saveState !== "saved" || tagsBusy || globalTagsBusy || generationBusy) return;
+    if (!query.data || deleteConfirmation !== draftId || saveState !== "saved" || tagsBusy || globalMutationBusy || generationBusy) return;
     setLifecycleBusy(true);
     setLifecycleError(null);
     setDeleteError(null);
@@ -760,7 +784,7 @@ function DraftEditor({
     && !lifecycleBusy
     && !generationBusy;
   const tagsEditable = !tagsBusy
-    && !globalTagsBusy
+    && !globalMutationBusy
     && !checkpointBusy
     && !dispatchBusy
     && !scopePending
@@ -778,7 +802,7 @@ function DraftEditor({
           flexDirection: "row",
           gap: 8,
           minHeight: uiMetrics.toolbarHeight,
-          paddingHorizontal: compact ? 0 : 14,
+          paddingHorizontal: compact ? 0 : 16,
           paddingVertical: 7,
         }}
       >
@@ -822,7 +846,7 @@ function DraftEditor({
           flexDirection: "row",
           flexWrap: "wrap",
           gap: 6,
-          paddingHorizontal: compact ? 0 : 14,
+          paddingHorizontal: compact ? 0 : 16,
           paddingVertical: 7,
         }}
       >
@@ -844,7 +868,7 @@ function DraftEditor({
                 || lifecycleBusy
                 || generationBusy
                 || tagsBusy
-                || globalTagsBusy,
+                || globalMutationBusy,
             },
             ...scopeProjects.map((project) => ({
               id: project.projectId,
@@ -858,7 +882,7 @@ function DraftEditor({
                  || lifecycleBusy
                  || generationBusy
                  || tagsBusy
-                 || globalTagsBusy,
+                 || globalMutationBusy,
             })),
           ]}
           selectedId={selectedScopeProjectId ?? "__inbox__"}
@@ -905,7 +929,7 @@ function DraftEditor({
               || lifecycleBusy
               || generationBusy
               || tagsBusy
-              || globalTagsBusy
+              || globalMutationBusy
               || !canTransitionDraftStatus(status, option.id, detail.summary.archivedFromStatus),
           }))}
           selectedId={status === "archived" ? null : status}
@@ -927,7 +951,7 @@ function DraftEditor({
             || lifecycleBusy
             || generationBusy
             || tagsBusy
-            || globalTagsBusy}
+            || globalMutationBusy}
           small
           theme={theme}
           variant="outline"
@@ -945,7 +969,7 @@ function DraftEditor({
                 setDeleteConfirmation("");
                 setDeleteError(null);
               }}
-              disabled={lifecycleBusy || generationBusy || hasPendingDispatch || tagsBusy || globalTagsBusy}
+              disabled={lifecycleBusy || generationBusy || hasPendingDispatch || tagsBusy || globalMutationBusy}
               small
               theme={theme}
               variant="danger"
@@ -974,7 +998,7 @@ function DraftEditor({
                 <NativeButton
                   label={lifecycleBusy ? t("editor.delete.deleting") : t("editor.delete.confirm")}
                   onPress={() => void permanentlyDelete()}
-                  disabled={lifecycleBusy || generationBusy || deleteConfirmation !== draftId || tagsBusy || globalTagsBusy}
+                  disabled={lifecycleBusy || generationBusy || deleteConfirmation !== draftId || tagsBusy || globalMutationBusy}
                   small
                   theme={theme}
                   variant="danger"
@@ -1011,23 +1035,6 @@ function DraftEditor({
         />
         {tagsBusy || globalTagsBusy ? <Hint theme={theme}>{t("editor.tags.saving")}</Hint> : null}
       </View>
-      <PromptAgentActions
-        compact={compact}
-        detail={detail}
-        disabled={checkpointBusy
-          || dispatchBusy
-          || scopePending
-          || scopeBusy
-          || lifecycleBusy
-          || tagsBusy
-          || globalTagsBusy}
-        onBusyChange={setGenerationBusy}
-        onUpdated={adoptGeneratedDraft}
-        projects={projects}
-        saveState={saveState}
-        tagSuggestions={tagSuggestions}
-        theme={theme}
-      />
       <NativeTextInput
         accessibilityLabel={t("editor.markdown.placeholder")}
         autoFocus={autoFocusBody}
@@ -1039,11 +1046,30 @@ function DraftEditor({
           fontSize: 15,
           lineHeight: 24,
           minHeight: compact ? 260 : 420,
-          paddingHorizontal: 2,
+          paddingHorizontal: 0,
         }}
         theme={theme}
         value={markdown}
         variant="bare"
+      />
+      <PromptAgentActions
+        boilerplateDisabled={!editable}
+        compact={compact}
+        detail={detail}
+        disabled={checkpointBusy
+          || dispatchBusy
+          || scopePending
+          || scopeBusy
+          || lifecycleBusy
+          || tagsBusy
+          || globalMutationBusy}
+        onBusyChange={setGenerationBusy}
+        onAppendBoilerplate={appendSavedBoilerplate}
+        onUpdated={adoptGeneratedDraft}
+        projects={projects}
+        saveState={saveState}
+        tagSuggestions={tagSuggestions}
+        theme={theme}
       />
 
       {detail.warnings.map((warning) => (
@@ -1063,7 +1089,7 @@ function DraftEditor({
             || scopeBusy
             || lifecycleBusy
             || tagsBusy
-            || globalTagsBusy;
+            || globalMutationBusy;
           return (
             <Pressable
               accessibilityRole="button"
@@ -1116,7 +1142,7 @@ function DraftEditor({
                 || lifecycleBusy
                 || generationBusy
                 || tagsBusy
-                || globalTagsBusy;
+                || globalMutationBusy;
               const starred = starredCheckpointIds.has(checkpoint.id);
               return (
                 <View
@@ -1196,7 +1222,7 @@ function DraftEditor({
         || lifecycleBusy
         || generationBusy
         || tagsBusy
-        || globalTagsBusy}
+        || globalMutationBusy}
       sendDisabledReason={archived
         ? t("editor.send.archived")
         : !sendable
@@ -1258,6 +1284,7 @@ export function StudioView({
   const createDraft = useRpc(draftCreateRpc);
   const renameCatalogTag = useRpc(tagRenameRpc);
   const batchCatalogTags = useRpc(tagBatchRpc);
+  const batchTransitionDrafts = useRpc(draftBatchTransitionRpc);
   const [queryText, setQueryText] = useState("");
   const [search, setSearch] = useState("");
   const [statuses, setStatuses] = useState<DraftStatus[]>([...draftStatuses]);
@@ -1347,7 +1374,7 @@ export function StudioView({
   const tagTree = catalogQuery.data?.tagTree ?? [];
   const tagSuggestions = useMemo(() => tagSuggestionsFromTree(tagTree), [tagTree]);
   const tagLabels = useMemo(() => tagControlLabels(t), [t]);
-  const draftBulkLabels = useMemo(() => bulkTagLabels(t), [t]);
+  const draftBulkLabels = useMemo(() => selectionLabels(t), [t]);
   const pendingVaultContainer = (catalogQuery.data?.containers.find((container) => container.id === "ct_inbox")
     ?? catalogQuery.data?.containers[0]);
   const vaultRegistrationPending = pendingVaultContainer?.registration.status === "pending";
@@ -1477,6 +1504,43 @@ export function StudioView({
     }
   }
 
+  const batchLifecycleMutation = useMutation({
+    mutationFn: async ({
+      selectedDrafts,
+      action,
+    }: {
+      selectedDrafts: DraftSummary[];
+      action: BatchDraftAction;
+    }): Promise<void> => {
+      const transitions = planBatchDraftTransitions(selectedDrafts, action);
+      if (!transitions.length) throw new Error(t("drafts.bulk.emptySelection"));
+      const block = navigationBlockRef.current;
+      if (block) {
+        const guidance = navigationGuidance(block.state);
+        setNavigationWarning(guidance);
+        throw new Error(guidance);
+      }
+
+      const result = await batchTransitionDrafts({ transitions });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["prompt-studio", "catalog"] }),
+        queryClient.invalidateQueries({ queryKey: ["prompt-studio", "draft"] }),
+      ]);
+
+      if (result.failures.length) {
+        const titles = new Map(selectedDrafts.map((draft) => [draft.id, draft.title]));
+        const details = result.failures
+          .map((failure) => `${titles.get(failure.draftId) ?? failure.draftId}: ${failure.message}`)
+          .join("; ");
+        throw new Error(t("drafts.bulk.partial", {
+          succeeded: result.changedDrafts.length + result.unchangedDraftIds.length,
+          failed: result.failures.length,
+          details,
+        }));
+      }
+    },
+  });
+
   const onNavigationStateChange = useCallback((draftId: string, state: NavigationBlockState | null) => {
     const current = navigationBlockRef.current;
     const next = state ? { draftId, state } : current?.draftId === draftId ? null : current;
@@ -1485,16 +1549,20 @@ export function StudioView({
     if (!state) setNavigationWarning(null);
   }, []);
 
+  function navigationGuidance(state: NavigationBlockState): string {
+    return state === "conflict" || state === "error"
+      ? t("nav.blocked.conflict")
+      : state === "saving" || state === "dirty"
+        ? t("nav.blocked.saving")
+        : state === "dispatching"
+          ? t("nav.blocked.dispatching")
+          : t("nav.blocked.updating");
+  }
+
   function blockedNavigation(): boolean {
     const block = navigationBlockRef.current;
     if (!block) return false;
-    const guidance = block.state === "conflict" || block.state === "error"
-      ? t("nav.blocked.conflict")
-      : block.state === "saving" || block.state === "dirty"
-        ? t("nav.blocked.saving")
-        : block.state === "dispatching"
-          ? t("nav.blocked.dispatching")
-          : t("nav.blocked.updating");
+    const guidance = navigationGuidance(block.state);
     setNavigationWarning(guidance);
     return true;
   }
@@ -1595,7 +1663,7 @@ export function StudioView({
       pending={catalogQuery.isPending}
       createError={createError}
       bulkLabels={draftBulkLabels}
-      bulkBusy={tagMutationBusy}
+      bulkBusy={tagMutationBusy || batchLifecycleMutation.isPending}
       onQueryTextChange={setQueryText}
       onStatusChange={setStatuses}
       onProjectChange={setProjectIds}
@@ -1604,6 +1672,9 @@ export function StudioView({
       onBulkAdd={(draftIds, values) => applyBatchTags(draftIds, values, "add")}
       onBulkRemove={(draftIds, values, removeDescendants) => (
         applyBatchTags(draftIds, values, "remove", removeDescendants)
+      )}
+      onBulkTransition={(selectedDrafts, action) => (
+        batchLifecycleMutation.mutateAsync({ selectedDrafts, action })
       )}
       onCreate={() => void newDraft()}
       onRefresh={() => void rebuildCatalog()}
@@ -1623,6 +1694,7 @@ export function StudioView({
       projects={projectChoices}
       tagSuggestions={tagSuggestions}
       globalTagsBusy={tagMutationBusy}
+      globalLifecycleBusy={batchLifecycleMutation.isPending}
       onBack={compact ? () => requestDraft(null) : undefined}
       onCatalogRefresh={() => void catalogQuery.refetch()}
       onCatalogDraftUpdated={updateCatalogDraft}

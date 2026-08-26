@@ -8,6 +8,7 @@ import {
   dispatchRetryRpc,
   dispatchSendRpc,
   draftAutosaveRpc,
+  draftBatchTransitionRpc,
   draftCreateRpc,
   draftDeleteRpc,
   draftGetRpc,
@@ -46,6 +47,7 @@ export default function contribute(plugin: PluginContext) {
   plugin.handle(tagBatchRpc, handlers.tagBatch);
   plugin.handle(draftScopeRpc, handlers.draftScope);
   plugin.handle(draftTransitionRpc, handlers.draftTransition);
+  plugin.handle(draftBatchTransitionRpc, handlers.draftBatchTransition);
   plugin.handle(draftDeleteRpc, handlers.draftDelete);
   plugin.handle(snapshotGetRpc, handlers.snapshotGet);
   plugin.handle(checkpointGetRpc, handlers.checkpointGet);

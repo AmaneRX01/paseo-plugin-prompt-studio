@@ -1,4 +1,10 @@
-import { useSyncExternalStore } from "react";
+import { useCallback } from "react";
+import {
+  createClientPreferenceStore,
+  readClientStorage,
+  useClientPreference,
+  writeClientStorage,
+} from "./preferences-store.client";
 
 /**
  * Prompt Studio client language pack. All user-visible surface/panel copy goes
@@ -33,17 +39,21 @@ const en = {
   "settings.history.starredCount.label": "Count starred checkpoints toward the limit",
   "settings.history.starredCount.help": "When off, all starred checkpoints are shown in addition to the recent unstarred checkpoints.",
   "settings.generation.title": "Prompt agents",
-  "settings.generation.help": "Choose an independent provider, model, and thinking level for each task. Prompt Studio enforces the safe mode at run time.",
+  "settings.generation.help": "Set the reference-range stops and choose an independent provider, model, and thinking level for each task. Prompt Studio enforces the safe mode at run time.",
   "settings.generation.related": "Related-prompt optimization",
   "settings.generation.format": "Formatting polish",
   "settings.generation.provider": "Provider",
   "settings.generation.model": "Model",
   "settings.generation.thinking": "Thinking",
   "settings.generation.defaultThinking": "Model default",
+  "settings.generation.timeRanges.title": "Reference time ranges",
+  "settings.generation.timeRanges.help": "Set the three ascending day ranges used by every Prompt reference slider. All time remains available as a fixed final option.",
+  "settings.generation.timeRanges.option": "Range {number} (days)",
+  "settings.generation.timeRanges.invalid": "Enter three different day values in ascending order, from 1 to 3650.",
   "settings.generation.loadingProviders": "Loading providers…",
   "settings.generation.noProviders": "No ready provider with a selectable model is available.",
   "settings.generation.invalid": "The saved option is no longer available: {value}",
-  "settings.generation.unsaved": "Configure at least one task and resolve any unavailable saved option before saving.",
+  "settings.generation.unsaved": "Resolve any invalid time range or unavailable provider option before saving.",
   "settings.generation.save": "Save agent settings",
   "settings.generation.saving": "Saving…",
   "settings.generation.saved": "Agent settings saved.",
@@ -215,6 +225,21 @@ const en = {
   "tags.batch.add": "Add {tag} to {count} selected drafts",
   "tags.batch.remove": "Remove {tag} from {count} selected drafts",
   "editor.markdown.placeholder": "Write the prompt in Markdown…",
+  "boilerplate.action": "Add boilerplate",
+  "boilerplate.title": "Boilerplates",
+  "boilerplate.help": "Insert a saved phrase at the end of the current prompt. Boilerplates are shared across languages.",
+  "boilerplate.close": "Close boilerplates",
+  "boilerplate.insert": "Insert",
+  "boilerplate.edit": "Edit",
+  "boilerplate.editItem": "Edit boilerplate {number}",
+  "boilerplate.delete": "Delete",
+  "boilerplate.deleteItem": "Delete boilerplate {number}",
+  "boilerplate.empty": "No boilerplates yet. Add one below.",
+  "boilerplate.text": "Boilerplate text",
+  "boilerplate.placeholder": "Write a reusable prompt phrase…",
+  "boilerplate.save": "Save boilerplate",
+  "boilerplate.cancel": "Cancel",
+  "boilerplate.new": "New boilerplate",
   "editor.warning": "Warning: {warning}",
   "editor.snapshots": "Snapshots & checkpoints",
   "editor.snapshots.subtitle": "Recovery checkpoints are periodic. Sent snapshots are permanent and byte-exact.",
@@ -229,31 +254,37 @@ const en = {
   "editor.send.archived": "Restore this archived draft before sending a new snapshot.",
   "editor.send.draft": "Mark this draft Ready before sending a snapshot.",
   "editor.sentVersion": "Sent v{version}",
-  "editor.generated": "Generated",
 
-  "generation.related.action": "Optimize with related prompts",
-  "generation.format.action": "Polish formatting",
+  "generation.related.action": "Prompt optimization",
+  "generation.format.action": "Quick optimization",
   "generation.related.title": "Optimize this prompt",
-  "generation.related.help": "Build a deterministic reference set from Prompt Studio checkpoints and current prompt bodies.",
+  "generation.related.help": "Choose each reference source and its own time range. Sources are combined and duplicate prompt bodies are removed.",
   "generation.close": "Close prompt optimization",
+  "generation.sources.target.label": "Checkpoints from this prompt",
+  "generation.sources.target.help": "Include earlier body versions saved in this prompt's checkpoint history.",
+  "generation.sources.projects.label": "Prompts from selected Projects",
+  "generation.sources.projects.help": "Include current prompt bodies from any selected Project or Inbox.",
+  "generation.sources.tags.label": "Prompts matching selected tags",
+  "generation.sources.tags.help": "Include current prompt bodies matching any selected tag, regardless of Project.",
   "generation.history.label": "Include checkpoint history",
   "generation.history.help": "Historical checkpoints use their prompt's current tags and Project scope.",
   "generation.time.label": "Time range",
+  "generation.time.days": "{count} days",
   "generation.time.7": "7 days",
   "generation.time.30": "30 days",
   "generation.time.90": "90 days",
   "generation.time.all": "All time",
   "generation.tags.label": "Match any tag",
-  "generation.tags.none": "No tag restriction",
+  "generation.tags.none": "Select at least one tag for this source to contribute prompts.",
   "generation.projects.cross": "Include other Projects",
   "generation.projects.same": "Only the current Project is included by default.",
   "generation.projects.label": "Projects to include",
   "generation.projects.inbox": "Inbox",
+  "generation.projects.none": "Select at least one Project or Inbox for this source to contribute prompts.",
   "generation.projectRead.label": "Allow read-only inspection of this Project",
   "generation.projectRead.help": "The agent may list, search, and read the current Project. It may not write, build, test, use the network, or access the Prompt Studio data vault.",
   "generation.security.native": "Provider-native read-only policy",
   "generation.security.behavioral": "Behavioral protection only",
-  "generation.security.warning": "This is defense in depth, not OS- or container-level isolation. Some providers may still be technically able to read other files available to your user account.",
   "generation.preview.loading": "Calculating references…",
   "generation.preview.eligible": "{eligible} eligible / {included} prompts included",
   "generation.preview.versions": "{eligible} eligible / {included} deduplicated reference versions included",
@@ -294,18 +325,26 @@ const en = {
   "drafts.all": "Drafts",
   "drafts.new": "New",
   "drafts.creating": "Creating…",
-  "drafts.bulk.start": "Batch tags",
+  "drafts.bulk.start": "Select",
   "drafts.bulk.done": "Done",
   "drafts.bulk.selectAll": "Select all matching",
   "drafts.bulk.clear": "Clear selection",
   "drafts.bulk.selected": "{count} selected",
   "drafts.bulk.select": "Select draft {title}",
+  "drafts.bulk.lifecycle": "Status actions",
+  "drafts.bulk.setDraft": "Draft · {count}",
+  "drafts.bulk.setReady": "Ready · {count}",
+  "drafts.bulk.archive": "Archive · {count}",
+  "drafts.bulk.restore": "Restore · {count}",
+  "drafts.bulk.tags": "Tag actions",
   "drafts.bulk.tags.placeholder": "Tags to add or remove",
   "drafts.bulk.add": "Add tags",
   "drafts.bulk.remove": "Remove tags",
   "drafts.bulk.applying": "Applying…",
   "drafts.bulk.empty": "Select at least one draft and one tag.",
-  "drafts.bulk.error": "Batch tag update failed: {error}",
+  "drafts.bulk.emptySelection": "Select at least one draft.",
+  "drafts.bulk.partial": "{succeeded} updated; {failed} failed. {details}",
+  "drafts.bulk.error": "Batch operation failed: {error}",
   "drafts.empty.title": "No matching drafts",
   "drafts.empty.body": "Create an Untitled plaintext draft or broaden the filters.",
   "drafts.untitled": "Untitled",
@@ -349,17 +388,21 @@ const zh: Record<MessageKey, string> = {
   "settings.history.starredCount.label": "星标检查点计入数量",
   "settings.history.starredCount.help": "关闭后会显示全部星标检查点，并额外显示设定数量的最近非星标检查点。",
   "settings.generation.title": "Prompt Agent",
-  "settings.generation.help": "为两类任务分别选择 provider、模型和思考强度。Prompt Studio 会在运行时强制安全模式。",
+  "settings.generation.help": "设置参考时间档位，并为两类任务分别选择 provider、模型和思考强度。Prompt Studio 会在运行时强制安全模式。",
   "settings.generation.related": "相关 Prompt 优化",
   "settings.generation.format": "行文格式润色",
   "settings.generation.provider": "Provider",
   "settings.generation.model": "模型",
   "settings.generation.thinking": "思考强度",
   "settings.generation.defaultThinking": "模型默认",
+  "settings.generation.timeRanges.title": "参考时间范围",
+  "settings.generation.timeRanges.help": "设置所有 Prompt 参考滑条使用的三个递增天数档位；“全部时间”始终保留为最后一档。",
+  "settings.generation.timeRanges.option": "档位 {number}（天）",
+  "settings.generation.timeRanges.invalid": "请输入三个不同且递增的天数，范围为 1 到 3650。",
   "settings.generation.loadingProviders": "正在加载 provider…",
   "settings.generation.noProviders": "没有已就绪且包含可选模型的 provider。",
   "settings.generation.invalid": "已保存的选项已不可用：{value}",
-  "settings.generation.unsaved": "请至少配置一类任务，并先处理已不可用的保存项。",
+  "settings.generation.unsaved": "请先处理无效的时间范围或已不可用的 provider 选项。",
   "settings.generation.save": "保存 Agent 设置",
   "settings.generation.saving": "正在保存…",
   "settings.generation.saved": "Agent 设置已保存。",
@@ -531,6 +574,21 @@ const zh: Record<MessageKey, string> = {
   "tags.batch.add": "将 {tag} 添加到选中的 {count} 份草稿",
   "tags.batch.remove": "从选中的 {count} 份草稿移除 {tag}",
   "editor.markdown.placeholder": "用 Markdown 编写 Prompt…",
+  "boilerplate.action": "添加定型文",
+  "boilerplate.title": "定型文",
+  "boilerplate.help": "把已保存的常用语插入当前 Prompt 末尾；定型文不区分中英文。",
+  "boilerplate.close": "关闭定型文",
+  "boilerplate.insert": "插入",
+  "boilerplate.edit": "编辑",
+  "boilerplate.editItem": "编辑第 {number} 条定型文",
+  "boilerplate.delete": "删除",
+  "boilerplate.deleteItem": "删除第 {number} 条定型文",
+  "boilerplate.empty": "还没有定型文，可在下方添加。",
+  "boilerplate.text": "定型文内容",
+  "boilerplate.placeholder": "输入可重复使用的 Prompt 常用语…",
+  "boilerplate.save": "保存定型文",
+  "boilerplate.cancel": "取消",
+  "boilerplate.new": "新建定型文",
   "editor.warning": "警告:{warning}",
   "editor.snapshots": "快照与检查点",
   "editor.snapshots.subtitle": "恢复检查点按周期生成;已发送快照永久保存且字节一致。",
@@ -545,31 +603,37 @@ const zh: Record<MessageKey, string> = {
   "editor.send.archived": "请先恢复此已归档草稿,再发送新快照。",
   "editor.send.draft": "请先将此草稿标记为就绪，再发送快照。",
   "editor.sentVersion": "已发送 v{version}",
-  "editor.generated": "生成式",
 
-  "generation.related.action": "根据相关 Prompt 优化",
-  "generation.format.action": "仅优化格式",
+  "generation.related.action": "Prompt 优化",
+  "generation.format.action": "快速优化",
   "generation.related.title": "优化当前 Prompt",
-  "generation.related.help": "从 Prompt Studio 检查点和 Prompt 当前正文中构建可重现的参考集。",
+  "generation.related.help": "分别选择参考来源及其时间范围；多个来源合并后会自动去重。",
   "generation.close": "关闭 Prompt 优化",
+  "generation.sources.target.label": "本草稿的检查点 Prompt",
+  "generation.sources.target.help": "包含本草稿检查点中保存的历史正文版本。",
+  "generation.sources.projects.label": "所选仓库中的 Prompt",
+  "generation.sources.projects.help": "包含任一所选 Project 或 Inbox 中 Prompt 的当前正文。",
+  "generation.sources.tags.label": "匹配所选 tag 的 Prompt",
+  "generation.sources.tags.help": "包含匹配任一所选 tag 的 Prompt 当前正文，不受 Project 限制。",
   "generation.history.label": "包含检查点历史",
   "generation.history.help": "历史检查点使用其所属 Prompt 当前的 tag 和 Project Scope。",
   "generation.time.label": "时间范围",
+  "generation.time.days": "{count} 天",
   "generation.time.7": "7 天",
   "generation.time.30": "30 天",
   "generation.time.90": "90 天",
   "generation.time.all": "全部时间",
   "generation.tags.label": "匹配任一 tag",
-  "generation.tags.none": "不限制 tag",
+  "generation.tags.none": "请至少选择一个 tag，否则此来源不会加入 Prompt。",
   "generation.projects.cross": "包含其他 Project",
   "generation.projects.same": "默认只包含当前 Project。",
   "generation.projects.label": "要包含的 Project",
   "generation.projects.inbox": "Inbox",
+  "generation.projects.none": "请至少选择一个 Project 或 Inbox，否则此来源不会加入 Prompt。",
   "generation.projectRead.label": "允许 Agent 只读检查当前 Project",
   "generation.projectRead.help": "Agent 可以列举、搜索和读取当前 Project，不得写入、构建、测试、联网或访问 Prompt Studio 数据 vault。",
   "generation.security.native": "Provider 原生只读策略",
   "generation.security.behavioral": "仅行为约束",
-  "generation.security.warning": "这是纵深防护，不是操作系统或容器级隔离。部分 provider 在技术上仍可能读取当前用户可访问的其他文件。",
   "generation.preview.loading": "正在计算参考范围…",
   "generation.preview.eligible": "符合条件 {eligible} 条 / 实际参考 {included} 条 Prompt",
   "generation.preview.versions": "符合条件 {eligible} 个 / 实际纳入 {included} 个去重参考版本",
@@ -610,18 +674,26 @@ const zh: Record<MessageKey, string> = {
   "drafts.all": "草稿",
   "drafts.new": "新建",
   "drafts.creating": "创建中…",
-  "drafts.bulk.start": "批量标签",
+  "drafts.bulk.start": "多选",
   "drafts.bulk.done": "完成",
   "drafts.bulk.selectAll": "选择全部匹配草稿",
   "drafts.bulk.clear": "清除选择",
   "drafts.bulk.selected": "已选择 {count} 份",
   "drafts.bulk.select": "选择草稿 {title}",
+  "drafts.bulk.lifecycle": "状态操作",
+  "drafts.bulk.setDraft": "设为草稿 · {count}",
+  "drafts.bulk.setReady": "设为就绪 · {count}",
+  "drafts.bulk.archive": "归档 · {count}",
+  "drafts.bulk.restore": "恢复 · {count}",
+  "drafts.bulk.tags": "标签操作",
   "drafts.bulk.tags.placeholder": "要添加或移除的标签",
   "drafts.bulk.add": "添加标签",
   "drafts.bulk.remove": "移除标签",
   "drafts.bulk.applying": "应用中…",
   "drafts.bulk.empty": "请至少选择一份草稿和一个标签。",
-  "drafts.bulk.error": "批量更新标签失败：{error}",
+  "drafts.bulk.emptySelection": "请至少选择一份草稿。",
+  "drafts.bulk.partial": "已更新 {succeeded} 份，{failed} 份失败。{details}",
+  "drafts.bulk.error": "批量操作失败：{error}",
   "drafts.empty.title": "没有匹配的草稿",
   "drafts.empty.body": "创建一份无标题明文草稿,或放宽筛选条件。",
   "drafts.untitled": "无标题",
@@ -646,13 +718,8 @@ const LANGUAGE_STORAGE_KEY = "prompt-studio.language";
 const DESCRIPTIONS_STORAGE_KEY = "prompt-studio.show-descriptions";
 
 function detectInitialLanguage(): Language {
-  try {
-    const storage = (globalThis as { localStorage?: Storage }).localStorage;
-    const stored = storage?.getItem(LANGUAGE_STORAGE_KEY);
-    if (stored === "en" || stored === "zh") return stored;
-  } catch {
-    // Storage is unavailable on some native runtimes; fall through.
-  }
+  const stored = readClientStorage(LANGUAGE_STORAGE_KEY);
+  if (stored === "en" || stored === "zh") return stored;
   try {
     const locale = (globalThis as { navigator?: { language?: string } }).navigator?.language;
     if (typeof locale === "string" && locale.toLowerCase().startsWith("zh")) return "zh";
@@ -663,52 +730,28 @@ function detectInitialLanguage(): Language {
 }
 
 function detectInitialShowDescriptions(): boolean {
-  try {
-    return (globalThis as { localStorage?: Storage }).localStorage?.getItem(DESCRIPTIONS_STORAGE_KEY) !== "false";
-  } catch {
-    return true;
-  }
+  return readClientStorage(DESCRIPTIONS_STORAGE_KEY) !== "false";
 }
 
-let currentLanguage: Language = detectInitialLanguage();
-let currentShowDescriptions = detectInitialShowDescriptions();
-const listeners = new Set<() => void>();
+const languageStore = createClientPreferenceStore(
+  detectInitialLanguage(),
+  (language) => writeClientStorage(LANGUAGE_STORAGE_KEY, language),
+);
+const descriptionsStore = createClientPreferenceStore(
+  detectInitialShowDescriptions(),
+  (showDescriptions) => writeClientStorage(DESCRIPTIONS_STORAGE_KEY, String(showDescriptions)),
+);
 
-function emit() {
-  for (const listener of listeners) listener();
-}
-
-export function setLanguage(language: Language) {
-  if (language === currentLanguage) return;
-  currentLanguage = language;
-  try {
-    (globalThis as { localStorage?: Storage }).localStorage?.setItem(LANGUAGE_STORAGE_KEY, language);
-  } catch {
-    // Persistence is best-effort only.
-  }
-  emit();
-}
-
-export function getLanguage(): Language {
-  return currentLanguage;
+function setLanguage(language: Language) {
+  languageStore.set(language);
 }
 
 export function setShowDescriptions(showDescriptions: boolean) {
-  if (showDescriptions === currentShowDescriptions) return;
-  currentShowDescriptions = showDescriptions;
-  try {
-    (globalThis as { localStorage?: Storage }).localStorage?.setItem(
-      DESCRIPTIONS_STORAGE_KEY,
-      String(showDescriptions),
-    );
-  } catch {
-    // Persistence is best-effort only.
-  }
-  emit();
+  descriptionsStore.set(showDescriptions);
 }
 
 export function getShowDescriptions(): boolean {
-  return currentShowDescriptions;
+  return descriptionsStore.getSnapshot();
 }
 
 function interpolate(template: string, vars?: Vars): string {
@@ -736,21 +779,11 @@ export interface I18n {
 }
 
 export function useI18n(): I18n {
-  const language = useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    getLanguage,
-    getLanguage,
-  );
-  const showDescriptions = useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    getShowDescriptions,
-    getShowDescriptions,
+  const language = useClientPreference(languageStore);
+  const showDescriptions = useClientPreference(descriptionsStore);
+  const t = useCallback(
+    (key: MessageKey, vars?: Vars) => translate(language, key, vars),
+    [language],
   );
   return {
     language,
@@ -758,6 +791,6 @@ export function useI18n(): I18n {
     setLanguage,
     setShowDescriptions,
     showDescriptions,
-    t: (key, vars) => translate(language, key, vars),
+    t,
   };
 }

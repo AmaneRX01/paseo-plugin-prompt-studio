@@ -721,10 +721,6 @@ export class VaultRepository {
     });
   }
 
-  async findContainerForProject(projectId: string): Promise<VaultContainerRecord | null> {
-    return (await this.listContainers()).find((container) => container.source?.projectId === projectId) ?? null;
-  }
-
   async findContainerByRoot(rootPath: string): Promise<VaultContainerRecord | null> {
     const normalized = normalizePath(rootPath);
     if (normalized === normalizePath(this.rootPath)) return this.findContainer("ct_inbox");

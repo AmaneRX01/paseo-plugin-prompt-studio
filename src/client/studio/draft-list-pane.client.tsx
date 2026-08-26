@@ -33,6 +33,10 @@ import {
   toggleActiveFilterSelection,
   toggleNullableFilterSelection,
 } from "./filter-selection.client";
+import {
+  planBatchDraftTransitions,
+  type BatchDraftAction,
+} from "./batch-selection.client";
 import type { ProjectChoice } from "./project-choices.client";
 import { displayTitle, formatWhen, scopeLabel } from "./studio-formatters.client";
 import {
@@ -90,7 +94,7 @@ export interface DraftListPaneProps {
   refreshing: boolean;
   pending: boolean;
   createError?: string | null;
-  bulkLabels: DraftBulkTagLabels;
+  bulkLabels: DraftSelectionLabels;
   bulkBusy?: boolean;
   bulkError?: string | null;
   onQueryTextChange: (value: string) => void;
@@ -104,24 +108,34 @@ export interface DraftListPaneProps {
     tags: string[],
     removeDescendants: boolean,
   ) => void | Promise<void>;
+  onBulkTransition: (
+    drafts: DraftSummary[],
+    action: BatchDraftAction,
+  ) => void | Promise<void>;
   onCreate: () => void;
   onRefresh: () => void;
   onSelect: (draftId: string) => void;
   style?: StyleProp<ViewStyle>;
 }
 
-export interface DraftBulkTagLabels {
+export interface DraftSelectionLabels {
   start: string;
   done: string;
   selectAll: string;
   clearSelection: string;
   selected: (count: number) => string;
   selectDraft: (title: string, selected: boolean) => string;
+  lifecycleTitle: string;
+  setDraft: (count: number) => string;
+  setReady: (count: number) => string;
+  archive: (count: number) => string;
+  restore: (count: number) => string;
+  tagsTitle: string;
   tagsPlaceholder: string;
   add: string;
   remove: string;
   applying: string;
-  empty: string;
+  emptySelection: string;
   error: (message: string) => string;
 }
 
@@ -159,6 +173,7 @@ export function DraftListPane({
   onTagRename,
   onBulkAdd,
   onBulkRemove,
+  onBulkTransition,
   onCreate,
   onRefresh,
   onSelect,
@@ -258,9 +273,31 @@ export function DraftListPane({
     }
   }
 
+  async function applyLifecycle(action: BatchDraftAction) {
+    const selectedDrafts = drafts.filter((draft) => selectedBulkDraftIds.includes(draft.id));
+    const transitions = planBatchDraftTransitions(selectedDrafts, action);
+    if (!transitions.length || applyingBulk) return;
+    setLocalBulkBusy(true);
+    setLocalBulkError(null);
+    try {
+      await onBulkTransition(selectedDrafts, action);
+    } catch (error) {
+      setLocalBulkError(bulkLabels.error(errorText(error)));
+    } finally {
+      setLocalBulkBusy(false);
+    }
+  }
+
   const allVisibleSelected = drafts.length > 0
     && drafts.every((draft) => selectedBulkDraftIds.includes(draft.id));
   const canApplyBulk = selectedBulkDraftIds.length > 0 && bulkTags.length > 0 && !applyingBulk;
+  const selectedDrafts = drafts.filter((draft) => selectedBulkDraftIds.includes(draft.id));
+  const transitionCounts = {
+    "set-draft": planBatchDraftTransitions(selectedDrafts, "set-draft").length,
+    "set-ready": planBatchDraftTransitions(selectedDrafts, "set-ready").length,
+    archive: planBatchDraftTransitions(selectedDrafts, "archive").length,
+    restore: planBatchDraftTransitions(selectedDrafts, "restore").length,
+  };
   const bulkInputLabels = {
     ...tagLabels,
     inputPlaceholder: bulkLabels.tagsPlaceholder,
@@ -299,6 +336,42 @@ export function DraftListPane({
           variant="ghost"
         />
       </View>
+      <FieldLabel theme={theme}>{bulkLabels.lifecycleTitle}</FieldLabel>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+        <NativeButton
+          disabled={applyingBulk || transitionCounts["set-draft"] === 0}
+          label={bulkLabels.setDraft(transitionCounts["set-draft"])}
+          onPress={() => void applyLifecycle("set-draft")}
+          small
+          theme={theme}
+          variant="outline"
+        />
+        <NativeButton
+          disabled={applyingBulk || transitionCounts["set-ready"] === 0}
+          label={bulkLabels.setReady(transitionCounts["set-ready"])}
+          onPress={() => void applyLifecycle("set-ready")}
+          small
+          theme={theme}
+        />
+        <NativeButton
+          disabled={applyingBulk || transitionCounts.archive === 0}
+          label={bulkLabels.archive(transitionCounts.archive)}
+          onPress={() => void applyLifecycle("archive")}
+          small
+          theme={theme}
+          variant="outline"
+        />
+        <NativeButton
+          disabled={applyingBulk || transitionCounts.restore === 0}
+          label={bulkLabels.restore(transitionCounts.restore)}
+          onPress={() => void applyLifecycle("restore")}
+          small
+          theme={theme}
+          variant="outline"
+        />
+      </View>
+      <Divider theme={theme} />
+      <FieldLabel theme={theme}>{bulkLabels.tagsTitle}</FieldLabel>
       <TagChipInput
         compact
         editable={!applyingBulk}
@@ -330,7 +403,7 @@ export function DraftListPane({
         />
       </View>
       {!selectedBulkDraftIds.length ? (
-        <Hint theme={theme}>{bulkLabels.empty}</Hint>
+        <Hint theme={theme}>{bulkLabels.emptySelection}</Hint>
       ) : null}
       {bulkError ? <Hint danger theme={theme}>{bulkError}</Hint> : null}
       {localBulkError ? <Hint danger theme={theme}>{localBulkError}</Hint> : null}
@@ -412,9 +485,6 @@ export function DraftListPane({
             tone={draft.status === "ready" ? "accent" : "neutral"}
           />
           <StatusPill label={scopeLabel(t, draft.scope)} theme={theme} />
-          {draft.contentOrigin.kind === "generated" ? (
-            <StatusPill label={t("editor.generated")} theme={theme} tone="accent" />
-          ) : null}
           {draft.tags.slice(0, 2).map((tag) => (
             <TagFilterChip
               compact

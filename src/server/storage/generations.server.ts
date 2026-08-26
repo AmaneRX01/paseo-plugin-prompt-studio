@@ -15,11 +15,13 @@ import {
 import {
   generationJobRecordSchema,
   generationSettingsSchema,
+  DEFAULT_GENERATION_TIME_RANGE_DAYS,
   type GenerationJob,
   type GenerationJobRecord,
   type GenerationJobStatus,
   type GenerationProviderConfig,
   type GenerationSettings,
+  type GenerationTimeRangeDays,
 } from "../../shared/generation.shared";
 import {
   assertSafePath,
@@ -31,6 +33,7 @@ import {
   readJson,
   writeJson,
 } from "./filesystem.server";
+import { KeyedLockQueue } from "./locking.server";
 
 const META_NAME = "meta.json";
 const REQUEST_NAME = "request.md";
@@ -100,6 +103,10 @@ async function removeLockParticipant(
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error ? error.code : null;
       if (code === "ENOENT") return;
+      // assertSafePath resolves through the nearest existing ancestor. Another
+      // contender may remove this unique participant between that resolution
+      // and lstat, which is a normal release race rather than a boundary error.
+      if (!(await exists(participantPath))) return;
       if (code !== "EBUSY" && code !== "EPERM" && code !== "ENOTEMPTY") throw error;
       await new Promise((resolve) => setTimeout(resolve, 5 + attempt * 2));
     }
@@ -114,6 +121,10 @@ async function assertLockPathOrMissing(boundaryPath: string, targetPath: string)
   } catch (error) {
     const code = error && typeof error === "object" && "code" in error ? error.code : null;
     if (code === "ENOENT") return false;
+    // A concurrently released participant can disappear while assertSafePath
+    // is resolving it. Treat only a confirmed missing path as the benign race;
+    // any replacement or unsafe path remains an error.
+    if (!(await exists(targetPath))) return false;
     throw error;
   }
 }
@@ -345,7 +356,7 @@ function isTerminal(status: GenerationJobStatus): boolean {
 export class GenerationRepository {
   readonly rootPath: string;
   private readonly now: () => Date;
-  private readonly locks = new Map<string, Promise<void>>();
+  private readonly locks = new KeyedLockQueue();
 
   constructor(rootPath: string, options: GenerationRepositoryOptions = {}) {
     this.rootPath = path.resolve(rootPath);
@@ -368,32 +379,16 @@ export class GenerationRepository {
     return path.join(this.generationsRoot(draftId), generationIdSchema.parse(generationId));
   }
 
-  private async acquireFileLock(key: string): Promise<() => Promise<void>> {
-    return acquireCrossProcessFileLock(
-      this.rootPath,
-      key,
-      `Prompt Studio generation resource is busy: ${key}`,
-    );
-  }
-
   private async withLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
-    const prior = this.locks.get(key) ?? Promise.resolve();
-    let releaseQueue!: () => void;
-    const queued = new Promise<void>((resolve) => {
-      releaseQueue = resolve;
-    });
-    const chain = prior.then(() => queued);
-    this.locks.set(key, chain);
-    await prior;
-    let releaseFile: (() => Promise<void>) | null = null;
-    try {
-      releaseFile = await this.acquireFileLock(key);
-      return await operation();
-    } finally {
-      if (releaseFile) await releaseFile();
-      releaseQueue();
-      if (this.locks.get(key) === chain) this.locks.delete(key);
-    }
+    return this.locks.run(
+      key,
+      () => acquireCrossProcessFileLock(
+        this.rootPath,
+        key,
+        `Prompt Studio generation resource is busy: ${key}`,
+      ),
+      operation,
+    );
   }
 
   private async ensureDraftBoundary(draftId: DraftId): Promise<string> {
@@ -728,6 +723,7 @@ export class GenerationSettingsRepository {
       version: 1,
       related: null,
       format: null,
+      contextTimeRangeDays: [...DEFAULT_GENERATION_TIME_RANGE_DAYS],
       updatedAt: this.now().toISOString(),
     };
   }
@@ -743,6 +739,7 @@ export class GenerationSettingsRepository {
     expectedVersion: number;
     related: GenerationProviderConfig | null;
     format: GenerationProviderConfig | null;
+    contextTimeRangeDays: GenerationTimeRangeDays;
   }): Promise<GenerationSettings> {
     return this.jobs.withSettingsLock(async () => {
       const current = await this.get();
@@ -756,6 +753,7 @@ export class GenerationSettingsRepository {
         version: current.version + 1,
         related: input.related,
         format: input.format,
+        contextTimeRangeDays: input.contextTimeRangeDays,
         updatedAt: this.now().toISOString(),
       });
       await writeJson(this.settingsPath(), next, this.rootPath);

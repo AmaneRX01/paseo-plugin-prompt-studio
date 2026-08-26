@@ -3,10 +3,13 @@ import { type PluginTheme, usePaseo, useRpc } from "@getpaseo/plugin";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import {
+  generationTimeRangeDaysSchema,
   generationSettingsGetRpc,
   generationSettingsUpdateRpc,
+  type GenerationSettings,
   type GenerationProviderConfig,
   type GenerationTask,
+  type GenerationTimeRangeDays,
 } from "../../shared/generation.shared";
 import { useI18n } from "../i18n.client";
 import {
@@ -14,6 +17,7 @@ import {
   FieldLabel,
   Hint,
   NativeButton,
+  NativeTextInput,
   SectionTitle,
   SegmentedControl,
   font,
@@ -48,6 +52,24 @@ interface EditableSettings {
   version: number;
   related: GenerationProviderConfig | null;
   format: GenerationProviderConfig | null;
+  contextTimeRangeDays: [string, string, string];
+}
+
+const TIME_RANGE_INPUT_INDICES = [0, 1, 2] as const;
+
+function editableSettings(settings: GenerationSettings): EditableSettings {
+  return {
+    version: settings.version,
+    related: settings.related,
+    format: settings.format,
+    contextTimeRangeDays: settings.contextTimeRangeDays.map(String) as [string, string, string],
+  };
+}
+
+function parsedTimeRangeDays(values: EditableSettings["contextTimeRangeDays"]): GenerationTimeRangeDays | null {
+  if (values.some((value) => !/^\d+$/.test(value))) return null;
+  const parsed = generationTimeRangeDaysSchema.safeParse(values.map(Number));
+  return parsed.success ? parsed.data : null;
 }
 
 function defaultModel(provider: ProviderOption): ModelOption | null {
@@ -164,6 +186,54 @@ function ProviderTaskEditor({
   );
 }
 
+function TimeRangeSettingsEditor({
+  values,
+  valid,
+  theme,
+  onChange,
+}: {
+  values: EditableSettings["contextTimeRangeDays"];
+  valid: boolean;
+  theme: PluginTheme;
+  onChange: (values: EditableSettings["contextTimeRangeDays"]) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <Card theme={theme}>
+      <Text style={{ color: theme.colors.foreground, fontSize: font.body, fontWeight: "500" }}>
+        {t("settings.generation.timeRanges.title")}
+      </Text>
+      <Hint theme={theme}>{t("settings.generation.timeRanges.help")}</Hint>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        {TIME_RANGE_INPUT_INDICES.map((index) => (
+          <View
+            key={index}
+            style={{ flexBasis: 64, flexGrow: 1, gap: 4 }}
+          >
+            <FieldLabel theme={theme}>
+              {t("settings.generation.timeRanges.option", { number: index + 1 })}
+            </FieldLabel>
+            <NativeTextInput
+              accessibilityLabel={t("settings.generation.timeRanges.option", { number: index + 1 })}
+              keyboardType="number-pad"
+              onChangeText={(value) => {
+                const next = [...values] as EditableSettings["contextTimeRangeDays"];
+                next[index] = value.replace(/\D/g, "").slice(0, 4);
+                onChange(next);
+              }}
+              small
+              style={{ minWidth: 48, textAlign: "center" }}
+              theme={theme}
+              value={values[index]}
+            />
+          </View>
+        ))}
+      </View>
+      {!valid ? <Hint danger theme={theme}>{t("settings.generation.timeRanges.invalid")}</Hint> : null}
+    </Card>
+  );
+}
+
 export function GenerationSettingsSection({
   compact,
   theme,
@@ -224,22 +294,23 @@ export function GenerationSettingsSection({
     const settings = settingsQuery.data?.settings;
     if (!settings || initializedVersion.current !== null) return;
     initializedVersion.current = settings.version;
-    setEditable({ version: settings.version, related: settings.related, format: settings.format });
+    setEditable(editableSettings(settings));
   }, [settingsQuery.data?.settings]);
 
   const updateMutation = useMutation({
-    mutationFn: (settings: EditableSettings) => updateSettings({
-      expectedVersion: settings.version,
-      related: settings.related,
-      format: settings.format,
-    }),
+    mutationFn: (settings: EditableSettings) => {
+      const contextTimeRangeDays = parsedTimeRangeDays(settings.contextTimeRangeDays);
+      if (!contextTimeRangeDays) throw new Error(t("settings.generation.timeRanges.invalid"));
+      return updateSettings({
+        expectedVersion: settings.version,
+        related: settings.related,
+        format: settings.format,
+        contextTimeRangeDays,
+      });
+    },
     onSuccess: (result) => {
       initializedVersion.current = result.settings.version;
-      setEditable({
-        version: result.settings.version,
-        related: result.settings.related,
-        format: result.settings.format,
-      });
+      setEditable(editableSettings(result.settings));
       queryClient.setQueryData(SETTINGS_QUERY_KEY, result);
       setNotice(t("settings.generation.saved"));
     },
@@ -255,7 +326,7 @@ export function GenerationSettingsSection({
     if (!result.data) return;
     const settings = result.data.settings;
     initializedVersion.current = settings.version;
-    setEditable({ version: settings.version, related: settings.related, format: settings.format });
+    setEditable(editableSettings(settings));
   }
 
   const validConfiguration = (config: GenerationProviderConfig | null) => {
@@ -265,9 +336,10 @@ export function GenerationSettingsSection({
         && (config.thinkingOptionId === null
           || model.thinkingOptions.some((option) => option.id === config.thinkingOptionId))));
   };
+  const validTimeRangeDays = editable ? parsedTimeRangeDays(editable.contextTimeRangeDays) !== null : false;
   const canSave = Boolean(
     editable
-    && (editable.related !== null || editable.format !== null)
+    && validTimeRangeDays
     && validConfiguration(editable.related)
     && validConfiguration(editable.format)
     && !updateMutation.isPending,
@@ -310,6 +382,15 @@ export function GenerationSettingsSection({
       ) : null}
       {editable ? (
         <>
+          <TimeRangeSettingsEditor
+            onChange={(contextTimeRangeDays) => {
+              setEditable((current) => current ? { ...current, contextTimeRangeDays } : current);
+              setNotice(null);
+            }}
+            theme={theme}
+            valid={validTimeRangeDays}
+            values={editable.contextTimeRangeDays}
+          />
           <ProviderTaskEditor
             config={editable.related}
             onChange={(related) => {

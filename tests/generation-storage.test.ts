@@ -22,6 +22,7 @@ let hash: typeof import("../src/server/storage/filesystem.server").hash;
 let acquireCrossProcessFileLock: typeof import("../src/server/storage/generations.server").acquireCrossProcessFileLock;
 let GenerationRepository: typeof import("../src/server/storage/generations.server").GenerationRepository;
 let GenerationSettingsRepository: typeof import("../src/server/storage/generations.server").GenerationSettingsRepository;
+let generationSettingsUpdateRpc: typeof import("../src/shared/generation.shared").generationSettingsUpdateRpc;
 let generationStartRpc: typeof import("../src/shared/generation.shared").generationStartRpc;
 let generationSyncRpc: typeof import("../src/shared/generation.shared").generationSyncRpc;
 test.before(async () => {
@@ -32,7 +33,7 @@ test.before(async () => {
     GenerationRepository,
     GenerationSettingsRepository,
   } = await import("../src/server/storage/generations.server"));
-  ({ generationStartRpc, generationSyncRpc } = await import("../src/shared/generation.shared"));
+  ({ generationSettingsUpdateRpc, generationStartRpc, generationSyncRpc } = await import("../src/shared/generation.shared"));
 });
 
 const draftId = "dr_1111111111111111" as DraftId;
@@ -251,18 +252,51 @@ test("generation settings use optimistic versions and persist independent task c
   const initial = await repository.get();
   assert.equal(initial.version, 1);
   assert.equal(initial.related, null);
+  assert.deepEqual(initial.contextTimeRangeDays, [3, 7, 14]);
   const updated = await repository.update({
     expectedVersion: initial.version,
     related: { provider: "codex", model: "gpt-5", thinkingOptionId: "high" },
     format: { provider: "kimi", model: "kimi-k2", thinkingOptionId: null },
+    contextTimeRangeDays: [2, 5, 21],
   });
   assert.equal(updated.version, 2);
+  assert.deepEqual(updated.contextTimeRangeDays, [2, 5, 21]);
   assert.equal((await repository.get()).format?.provider, "kimi");
   await assert.rejects(repository.update({
     expectedVersion: 1,
     related: null,
     format: null,
+    contextTimeRangeDays: [3, 7, 14],
   }), /settings changed/i);
+});
+
+test("legacy generation settings recover the default time ranges without rewriting on read", async (t) => {
+  const root = await createVault(t);
+  const localRoot = path.join(root, "local");
+  const settingsPath = path.join(localRoot, "generation-settings.json");
+  await mkdir(localRoot, { recursive: true });
+  const legacySettings = {
+    schemaVersion: 1,
+    version: 4,
+    related: { provider: "codex", model: "gpt-5", thinkingOptionId: null },
+    format: null,
+    updatedAt: "2026-08-25T00:00:00.000Z",
+  };
+  await writeFile(settingsPath, JSON.stringify(legacySettings), "utf8");
+
+  const repository = new GenerationSettingsRepository(root);
+  const recovered = await repository.get();
+  assert.deepEqual(recovered.contextTimeRangeDays, [3, 7, 14]);
+  assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")), legacySettings);
+
+  await repository.update({
+    expectedVersion: recovered.version,
+    related: recovered.related,
+    format: recovered.format,
+    contextTimeRangeDays: [1, 7, 30],
+  });
+  const persisted = JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, unknown>;
+  assert.deepEqual(persisted.contextTimeRangeDays, [1, 7, 30]);
 });
 
 test("independent repository instances tolerate lock-file release races", async (t) => {
@@ -327,4 +361,19 @@ test("generation RPC inputs reject client-supplied paths, prompt bodies, and Age
   const validSync = { draftId, generationId: firstGenerationId };
   assert.equal(generationSyncRpc.input.safeParse(validSync).success, true);
   assert.equal(generationSyncRpc.input.safeParse({ ...validSync, responseMarkdown: "forged response" }).success, false);
+  const validSettingsUpdate = {
+    expectedVersion: 1,
+    related: null,
+    format: null,
+    contextTimeRangeDays: [3, 7, 14],
+  };
+  assert.equal(generationSettingsUpdateRpc.input.safeParse(validSettingsUpdate).success, true);
+  assert.equal(generationSettingsUpdateRpc.input.safeParse({
+    ...validSettingsUpdate,
+    contextTimeRangeDays: [7, 3, 14],
+  }).success, false);
+  assert.equal(generationSettingsUpdateRpc.input.safeParse({
+    ...validSettingsUpdate,
+    contextTimeRangeDays: [0, 7, 14],
+  }).success, false);
 });

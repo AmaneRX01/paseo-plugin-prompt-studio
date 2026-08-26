@@ -1,8 +1,8 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, Switch, Text, View } from "react-native";
+import { ScrollView, Switch, Text, View } from "react-native";
 import { useI18n, type MessageKey } from "../i18n.client";
-import { Hint, NativeButton, SegmentedControl, font, paletteOf, uiMetrics } from "../ui.client";
+import { Hint, NativeButton, NativeDialog, SegmentedControl, font, paletteOf, uiMetrics } from "../ui.client";
 import {
   HISTORY_LIMIT_OPTIONS,
   setCheckpointLimit,
@@ -29,59 +29,23 @@ function StudioSettings({ theme, compact }: { theme: PluginTheme; compact: boole
         theme={theme}
         variant="ghost"
       />
-      <Modal
-        animationType="fade"
-        onRequestClose={() => setOpen(false)}
-        transparent
+      <NativeDialog
+        accessibilityLabel={t("settings.close")}
+        compact={compact}
+        maxWidth={480}
+        onClose={() => setOpen(false)}
+        theme={theme}
+        title={t("settings.title")}
         visible={open}
       >
-        <View style={{ alignItems: "flex-end", flex: 1, padding: compact ? 12 : 16, paddingTop: compact ? 56 : 64 }}>
-          <Pressable
-            accessibilityLabel={t("settings.close")}
-            accessibilityRole="button"
-            onPress={() => setOpen(false)}
-            style={{ bottom: 0, left: 0, position: "absolute", right: 0, top: 0 }}
-          />
-          <View
-            accessibilityViewIsModal
-            style={{
-              backgroundColor: theme.colors.surface0,
-              borderColor: palette.borderStrong,
-              borderRadius: uiMetrics.surfaceRadius,
-              borderWidth: 1,
-              elevation: 12,
-              gap: 16,
-              maxHeight: "86%",
-              maxWidth: 360,
-              padding: 16,
-              shadowColor: theme.colors.foreground,
-              shadowOffset: { height: 4, width: 0 },
-              shadowOpacity: 0.18,
-              shadowRadius: 12,
-              width: compact ? "100%" : 320,
-            }}
-          >
-            <View style={{ alignItems: "center", flexDirection: "row", gap: 12 }}>
-              <Text style={{ color: theme.colors.foreground, flex: 1, fontSize: font.title, fontWeight: "500" }}>
-                {t("settings.title")}
-              </Text>
-              <NativeButton
-                accessibilityLabel={t("settings.close")}
-                label="×"
-                onPress={() => setOpen(false)}
-                small
-                style={{ minWidth: uiMetrics.compactControlHeight, paddingHorizontal: 0 }}
-                theme={theme}
-                variant="ghost"
-              />
-            </View>
-
-            <ScrollView
-              contentContainerStyle={{ gap: 16, paddingBottom: 4 }}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator
-              style={{ minHeight: 0 }}
-            >
+        <ScrollView
+          contentContainerStyle={{ gap: 16, paddingBottom: 4, paddingRight: compact ? 2 : 6 }}
+          keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled
+          persistentScrollbar
+          showsVerticalScrollIndicator
+          style={{ flexShrink: 1, minHeight: 0 }}
+        >
               <View style={{ gap: 8 }}>
               <Text style={{ color: theme.colors.foregroundMuted, fontSize: font.caption, fontWeight: "500" }}>
                 {t("language.label")}
@@ -166,11 +130,9 @@ function StudioSettings({ theme, compact }: { theme: PluginTheme; compact: boole
                 />
               </View>
               </View>
-              <GenerationSettingsSection compact={compact} theme={theme} visible={open} />
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+          <GenerationSettingsSection compact={compact} theme={theme} visible={open} />
+        </ScrollView>
+      </NativeDialog>
     </>
   );
 }

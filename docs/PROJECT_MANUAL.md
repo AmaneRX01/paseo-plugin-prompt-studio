@@ -100,14 +100,15 @@ Worklog is strictly read-only. It has no UI, RPC, or server path for adding manu
 
 ### 3.5 Prompt Agent actions and settings
 
-The action bar between tags and the editor has two actions:
+The action bar below the Markdown editor has three actions:
 
-- **Optimize from related Prompts** opens the context filter and count preview. History defaults on, time defaults to 90 days, and the current Draft's tags and Project are selected. Project-file inspection defaults off for every run.
-- **Format Prompt** directly performs a light prose/Markdown cleanup. It never includes other Prompts, history, or Project files.
+- **Add boilerplate** opens one language-neutral list of reusable phrases. Selecting a phrase appends it to the end of the current Markdown with a blank-line separator and enters the normal autosave flow. Users can add, edit, and delete phrases; a fresh client starts with three common English fragments.
+- **Prompt optimization** opens the context-source and count preview. Checkpoints from the current Draft, Prompt bodies from selected Projects/Inbox, and Prompt bodies matching selected tags are independently enabled and each has its own time range. The current Draft's Project and tags are selected initially; enabled Project and tag sources are combined and deduplicated. The three configurable day stops default to 3, 7, and 14 days, with **All time** fixed as the last option. Project-file inspection defaults off for every run.
+- **Quick optimization** directly performs a light prose/Markdown cleanup. It never includes other Prompts, history, or Project files.
 
-Settings keeps separate provider, model, and thinking choices for these tasks. If a saved choice is no longer available, Prompt Studio reports it and does not silently choose another. During an unresolved job, body/scope/state/send/archive actions for that Draft are locked, but other Drafts remain browsable. Generated revisions display a **Generated** marker in the editor and Draft list.
+Settings keeps separate provider, model, and thinking choices for these tasks and persists three strictly ascending reference-range day values. If a saved choice is no longer available, Prompt Studio reports it and does not silently choose another. During an unresolved job, body/scope/state/send/archive actions for that Draft are locked, but other Drafts remain browsable. AI-optimized revisions use the same editor and Draft-list presentation as manually edited revisions.
 
-Paseo 0.5.1 has no provider-independent readable-path allowlist or OS/container boundary. Prompt Studio rejects its managed vault as Agent cwd, uses the strongest provider-native read-only settings available, and repeats the file-access restrictions in the localized task prompt. A behavioral-only warning means exactly that; it is not hard filesystem isolation.
+Prompt Studio rejects its managed vault as Agent cwd, uses the strongest provider-native read-only settings available, and repeats the file-access restrictions in the localized task prompt. When Project inspection is enabled, the UI shows the resulting protection level beside that permission.
 
 ### 3.6 Localization and responsive layout
 

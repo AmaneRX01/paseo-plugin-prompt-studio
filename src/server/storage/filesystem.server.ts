@@ -34,17 +34,6 @@ export function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function slugify(value: string): string {
-  const slug = value
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("en-US")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-  return slug || "project";
-}
-
 export function preview(markdown: string): string {
   return markdown.replace(/\s+/g, " ").trim().slice(0, 240);
 }

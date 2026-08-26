@@ -2193,6 +2193,38 @@ test("draft lifecycle creates a checkpoint on ready and restores the pre-archive
     && event.details.toStatus === "ready"));
 });
 
+test("batch lifecycle handler reports stale drafts without hiding successful transitions", async (t) => {
+  const { store } = await makeStore(t);
+  await store.ensureContainer(null);
+  const first = await store.createDraft("ct_inbox", globalScope, "First batch draft", "first");
+  const stale = await store.createDraft("ct_inbox", globalScope, "Stale batch draft", "stale");
+
+  const result = await createHandlers(store).draftBatchTransition({
+    transitions: [
+      {
+        draftId: first.summary.id,
+        targetStatus: "ready",
+        expectedVersion: first.summary.version,
+        expectedHash: first.summary.contentHash,
+      },
+      {
+        draftId: stale.summary.id,
+        targetStatus: "ready",
+        expectedVersion: stale.summary.version + 1,
+        expectedHash: stale.summary.contentHash,
+      },
+    ],
+  });
+
+  assert.deepEqual(result.changedDrafts.map((draft) => draft.id), [first.summary.id]);
+  assert.deepEqual(result.unchangedDraftIds, []);
+  assert.equal(result.failures.length, 1);
+  assert.equal(result.failures[0]?.draftId, stale.summary.id);
+  assert.match(result.failures[0]?.message ?? "", /conflict|version/i);
+  assert.equal((await store.getDraft(first.summary.id)).summary.status, "ready");
+  assert.equal((await store.getDraft(stale.summary.id)).summary.status, "draft");
+});
+
 test("editing a ready draft returns it to draft for autosave, external edits, and checkpoint restore", async (t) => {
   const { store, draft } = await createGlobalDraft(t, "Ready edits", "first body");
   const ready = await markReady(store, draft.summary.id);

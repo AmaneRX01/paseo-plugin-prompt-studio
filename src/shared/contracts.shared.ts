@@ -378,15 +378,44 @@ export const draftScopeRpc = defineRpc({
   output: z.object({ draft: draftDetailSchema, registrationWarning: z.string().nullable() }),
 });
 
+const draftTransitionInputSchema = z.object({
+  draftId: draftIdSchema,
+  targetStatus: draftStatusSchema,
+  expectedVersion: z.number().int().positive(),
+  expectedHash: sha256Schema,
+}).strict();
+
 export const draftTransitionRpc = defineRpc({
   name: "prompt-studio.draft-transition",
-  input: z.object({
-    draftId: draftIdSchema,
-    targetStatus: draftStatusSchema,
-    expectedVersion: z.number().int().positive(),
-    expectedHash: sha256Schema,
-  }),
+  input: draftTransitionInputSchema,
   output: z.object({ draft: draftDetailSchema, changed: z.boolean() }),
+});
+
+export const draftBatchTransitionRpc = defineRpc({
+  name: "prompt-studio.draft-batch-transition",
+  input: z.object({
+    transitions: z.array(draftTransitionInputSchema).min(1).max(500).superRefine((items, context) => {
+      const seen = new Set<string>();
+      items.forEach((item, index) => {
+        if (seen.has(item.draftId)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Duplicate Draft ID",
+            path: [index, "draftId"],
+          });
+        }
+        seen.add(item.draftId);
+      });
+    }),
+  }).strict(),
+  output: z.object({
+    changedDrafts: z.array(draftSummarySchema),
+    unchangedDraftIds: z.array(draftIdSchema),
+    failures: z.array(z.object({
+      draftId: draftIdSchema,
+      message: z.string(),
+    })),
+  }),
 });
 
 export const draftDeleteRpc = defineRpc({
@@ -444,10 +473,8 @@ export const dispatchReconcileRpc = defineRpc({
 export type ContainerId = z.infer<typeof containerIdSchema>;
 export type DraftId = z.infer<typeof draftIdSchema>;
 export type DraftStatus = z.infer<typeof draftStatusSchema>;
-export type ActiveDraftStatus = z.infer<typeof activeDraftStatusSchema>;
 export type DraftScope = z.infer<typeof draftScopeSchema>;
 export type DraftScopeTarget = z.infer<typeof draftScopeTargetSchema>;
-export type ContentOrigin = z.infer<typeof contentOriginSchema>;
 export type ContainerSummary = z.infer<typeof containerSummarySchema>;
 export type DraftSummary = z.infer<typeof draftSummarySchema>;
 export type DraftDetail = z.infer<typeof draftDetailSchema>;

@@ -73,6 +73,7 @@ import(__COMPILER__).then(async ({ compilePlugin }) => {
     "prompt-studio.tag-batch",
     "prompt-studio.draft-scope",
     "prompt-studio.draft-transition",
+    "prompt-studio.draft-batch-transition",
     "prompt-studio.draft-delete",
     "prompt-studio.snapshot-get",
     "prompt-studio.checkpoint-get",

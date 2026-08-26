@@ -44,6 +44,7 @@ Automated tests cover these high-risk paths:
 
 - Controls in one row must all use the standard size or all use `small`. Do not patch alignment locally with `minHeight` or `paddingVertical`.
 - Borderless editors use the `bare` variant of `NativeTextInput`. Do not override the shared input with local `backgroundColor` or `borderRadius: 0` styles.
+- Floating settings and action dialogs use `NativeDialog`; do not duplicate modal backdrops, surface fills, title typography, shadows, or close controls in feature components. Scrollable dialog bodies show the vertical indicator, and long fixed lists use an explicit bounded height.
 - Components must not hard-code colors. Text, backgrounds, borders, statuses, and accents come from the Paseo theme or `paletteOf(theme)`.
 - Keep interactive options on one line and truncate when necessary so long Project, Workspace, Provider, or Model names do not increase row height.
 - Manually verify UI changes in wide and compact layouts, in English and Chinese, and in light and dark themes. Save comparison screenshots for important surfaces.

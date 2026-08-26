@@ -9,6 +9,7 @@ import {
   dispatchRetryRpc,
   dispatchSendRpc,
   draftAutosaveRpc,
+  draftBatchTransitionRpc,
   draftCreateRpc,
   draftDeleteRpc,
   draftGetRpc,
@@ -31,7 +32,7 @@ import {
 } from "./project-registration.server";
 import { createGenerationHandlers } from "./generation-handlers.server";
 import { PromptStudioGenerationStore } from "./generation-store.server";
-import { normalizePath } from "./storage/filesystem.server";
+import { formatError, normalizePath } from "./storage/filesystem.server";
 import { PromptStudioStore, type ResolvedSourceProject } from "./store.server";
 
 interface DispatchAgentSnapshot {
@@ -162,10 +163,6 @@ export async function projectLinkWarnings(
   } catch (error) {
     return [`Paseo Project links could not be verified: ${formatError(error)}`];
   }
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 async function ensureForTarget(
@@ -440,6 +437,27 @@ export function createHandlers(store = new PromptStudioStore()) {
 
     draftTransition(input: ZodOutput<typeof draftTransitionRpc.input>) {
       return store.transitionDraft(input);
+    },
+
+    async draftBatchTransition(input: ZodOutput<typeof draftBatchTransitionRpc.input>) {
+      const changedDrafts = [];
+      const unchangedDraftIds: string[] = [];
+      const failures: Array<{ draftId: string; message: string }> = [];
+
+      // Each transition keeps the Store's ordinary optimistic checks and locks.
+      // A stale or blocked Draft does not prevent independent selected Drafts
+      // from completing; callers receive every partial failure explicitly.
+      for (const transition of input.transitions) {
+        try {
+          const result = await store.transitionDraft(transition);
+          if (result.changed) changedDrafts.push(result.draft.summary);
+          else unchangedDraftIds.push(transition.draftId);
+        } catch (error) {
+          failures.push({ draftId: transition.draftId, message: formatError(error) });
+        }
+      }
+
+      return { changedDrafts, unchangedDraftIds, failures };
     },
 
     draftDelete(input: ZodOutput<typeof draftDeleteRpc.input>) {

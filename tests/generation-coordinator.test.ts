@@ -447,7 +447,7 @@ function seedPreparedJob(
   return job;
 }
 
-test("provider policies force unattended read-only controls and disclose behavioral fallbacks", () => {
+test("provider policies force unattended read-only controls without verbose warnings", () => {
   const codex = buildGenerationAgentPolicy({
     selection: { provider: "codex", model: "gpt-5.5", thinkingOptionId: null },
     allowProjectRead: true,
@@ -465,7 +465,7 @@ test("provider policies force unattended read-only controls and disclose behavio
     },
   });
   assert.equal(codex.protection.level, "behavioral-only");
-  assert.match(codex.protection.warning ?? "", /readable-root allowlist/);
+  assert.equal(codex.protection.warning, null);
 
   const kimiNoRead = buildGenerationAgentPolicy({
     selection: { provider: "kimi", model: "kimi-for-coding", thinkingOptionId: null },
@@ -485,6 +485,7 @@ test("provider policies force unattended read-only controls and disclose behavio
   });
   assert.equal(kimiRead.config.modeId, "default");
   assert.equal(kimiRead.protection.level, "behavioral-only");
+  assert.equal(kimiRead.protection.warning, null);
 
   const claude = buildGenerationAgentPolicy({
     selection: { provider: "claude", model: "claude-sonnet-5", thinkingOptionId: null },
@@ -500,6 +501,7 @@ test("provider policies force unattended read-only controls and disclose behavio
   );
   assert.ok((claude.config.options?.disallowedTools as string[]).includes("Task"));
   assert.equal(claude.protection.level, "behavioral-only");
+  assert.equal(claude.protection.warning, null);
 
   const opencode = buildGenerationAgentPolicy({
     selection: { provider: "opencode", model: "openai/gpt-5.5", thinkingOptionId: null },
@@ -519,7 +521,7 @@ test("provider policies force unattended read-only controls and disclose behavio
     systemPrompt: "system",
   });
   assert.equal(unknown.protection.level, "behavioral-only");
-  assert.match(unknown.protection.warning ?? "", /behavioral only/);
+  assert.equal(unknown.protection.warning, null);
 });
 
 test("start persists and claims a job before one Agent create with stable safety metadata", async (t) => {
