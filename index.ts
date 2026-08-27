@@ -32,7 +32,11 @@ import {
 } from "./src/shared/generation.shared";
 import { generationHandlers, handlers } from "./src/server/handlers.server";
 import { PromptStudioSurface, WorklogSurface } from "./src/client/main.client";
-import { PromptAgentPanel, PromptWorkspacePanel } from "./src/client/panel.client";
+import {
+  PromptAgentPanel,
+  PromptWorkspaceExplorerPanel,
+  PromptWorkspacePanel,
+} from "./src/client/panel.client";
 
 export default function contribute(plugin: PluginContext) {
   // Keep server singleton references directly inside each handle expression. The
@@ -85,6 +89,7 @@ export default function contribute(plugin: PluginContext) {
     title: "Prompt Scratchpad",
     icon: "FileText",
     context: "workspace",
+    locations: ["workspace"],
     Component: PromptWorkspacePanel,
   });
   plugin.addWorkspacePanel({
@@ -92,7 +97,16 @@ export default function contribute(plugin: PluginContext) {
     title: "Prompt Scratchpad",
     icon: "FileText",
     context: "agent",
+    locations: ["workspace"],
     Component: PromptAgentPanel,
+  });
+  plugin.addWorkspacePanel({
+    id: "prompt-scratchpad-explorer",
+    title: "Prompt Scratchpad",
+    icon: "FileText",
+    context: "workspace",
+    locations: ["explorer"],
+    Component: PromptWorkspaceExplorerPanel,
   });
 
   plugin.addCommandCenterItem({
@@ -122,7 +136,7 @@ export default function contribute(plugin: PluginContext) {
     keywords: ["prompt", "scratchpad", "draft", "workspace", "草稿"],
     context: "workspace",
     onSelect({ openPanel }) {
-      openPanel("prompt-scratchpad-workspace");
+      openPanel("prompt-scratchpad-explorer", { location: "explorer" });
     },
   });
 

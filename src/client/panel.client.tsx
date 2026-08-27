@@ -24,7 +24,12 @@ function MissingContext({ theme, messageKey }: { theme: PluginTheme; messageKey:
   );
 }
 
-export function PromptWorkspacePanel({ theme, host, layout, workspaceId }: PluginWorkspacePanelProps) {
+function WorkspaceScratchpad({
+  theme,
+  host,
+  workspaceId,
+  compact,
+}: PluginWorkspacePanelProps & { compact: boolean }) {
   const workspace = useWorkspace(workspaceId, ({ projectId, projectDisplayName }) => ({
     projectId,
     projectName: projectDisplayName,
@@ -36,7 +41,7 @@ export function PromptWorkspacePanel({ theme, host, layout, workspaceId }: Plugi
 
   return (
     <CompanionManager
-      compact={layout.compact}
+      compact={compact}
       projectContext={{
         projectId: workspace.projectId,
         workspaceLocatorId: workspaceId,
@@ -46,6 +51,14 @@ export function PromptWorkspacePanel({ theme, host, layout, workspaceId }: Plugi
       theme={theme}
     />
   );
+}
+
+export function PromptWorkspacePanel(props: PluginWorkspacePanelProps) {
+  return <WorkspaceScratchpad {...props} compact={props.layout.compact} />;
+}
+
+export function PromptWorkspaceExplorerPanel(props: PluginWorkspacePanelProps) {
+  return <WorkspaceScratchpad {...props} compact />;
 }
 
 export function PromptAgentPanel({ theme, host, layout, workspaceId, agentId }: PluginAgentPanelProps) {

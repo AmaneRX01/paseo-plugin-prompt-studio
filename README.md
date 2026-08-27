@@ -14,7 +14,7 @@ The product name is **Prompt Studio for Paseo**. The repository and npm package 
 ## Highlights
 
 - Dedicated Prompt Studio and Worklog surfaces, sidebar entries, and Command Center actions.
-- Workspace- and agent-context Prompt Scratchpad panels.
+- Workspace- and agent-context Prompt Scratchpad panels, plus a compact Workspace Scratchpad in Explorer.
 - A single plaintext vault whose `drafts/` directory contains every canonical draft lineage.
 - Inbox or Project scope without tying a draft to a specific Workspace or Agent.
 - Debounced autosave with optimistic version and content-hash checks, external-edit detection, and recoverable checkpoints.
@@ -110,7 +110,7 @@ Generation runs are durable and single-flight per Draft. While one is unresolved
 
 When the content is ready to send, change the draft state to **Ready**. Prompt Studio creates a checkpoint before the transition. Select an existing Agent or configure a new Agent, then freeze and send the current version. The frozen snapshot remains unchanged even if the draft is edited later.
 
-Open **Worklog** for a read-only activity timeline. From a Workspace or Agent context, use **Open Prompt Scratchpad** to work with the drafts scoped to that Project.
+Open **Worklog** for a read-only activity timeline. From a Workspace or Agent context, use **Open Prompt Scratchpad** to work with the drafts scoped to that Project. In Paseo 0.6 and later, the Workspace Scratchpad opens in Explorer beside **Files** and **Changes**; the full Workspace and Agent panels remain available as workspace tabs.
 
 ## Data model
 

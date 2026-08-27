@@ -205,10 +205,23 @@ test("prompt agent actions keep agent replies behind server reconciliation", () 
   );
 });
 
-test("the Command Center exposes one persistent Scratchpad without Quick Draft simulations", () => {
+test("the Command Center opens the persistent Scratchpad in Explorer without Quick Draft simulations", () => {
   const indexSource = readFileSync(join(repositoryRoot, "index.ts"), "utf8");
+  const panelSource = readFileSync(join(clientRoot, "panel.client.tsx"), "utf8");
 
   assert.equal(indexSource.match(/title: "Open Prompt Scratchpad"/g)?.length ?? 0, 1);
+  assert.match(
+    indexSource,
+    /id: "prompt-scratchpad-explorer"[^]*locations: \["explorer"\][^]*Component: PromptWorkspaceExplorerPanel/,
+  );
+  assert.match(
+    indexSource,
+    /openPanel\("prompt-scratchpad-explorer", \{ location: "explorer" \}\)/,
+  );
+  assert.match(
+    panelSource,
+    /export function PromptWorkspaceExplorerPanel[^]*<WorkspaceScratchpad \{\.\.\.props\} compact \/>/,
+  );
   assert.doesNotMatch(indexSource, /id: "open-prompt-scratchpad-agent"/);
   assert.doesNotMatch(indexSource, /quick-project-draft|QuickPrompt|requestQuickPrompt/);
 });

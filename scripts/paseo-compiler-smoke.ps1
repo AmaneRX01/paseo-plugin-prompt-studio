@@ -40,6 +40,7 @@ import(__COMPILER__).then(async ({ compilePlugin }) => {
     "sidebar:worklog",
     "panel:prompt-scratchpad-workspace",
     "panel:prompt-scratchpad-agent",
+    "panel:prompt-scratchpad-explorer",
     "command:open-prompt-studio",
     "command:open-worklog",
     "command:open-prompt-scratchpad-workspace",
