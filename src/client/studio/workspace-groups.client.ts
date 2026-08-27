@@ -11,6 +11,11 @@ export interface ProjectWorkspaceGroup {
   workspaces: WorkspacePickerChoice[];
 }
 
+export interface WorkspaceDirectoryProjectChoice {
+  projectId: string;
+  projectDisplayName: string;
+}
+
 /**
  * Preserve Paseo's activity ordering while exposing the Project hierarchy that
  * owns each Workspace. The first Workspace for a Project determines the
@@ -19,6 +24,7 @@ export interface ProjectWorkspaceGroup {
 export function groupWorkspacesByProject(
   workspaces: readonly WorkspacePickerChoice[],
   prioritizedProjectId?: string | null,
+  projects: readonly WorkspaceDirectoryProjectChoice[] = [],
 ): ProjectWorkspaceGroup[] {
   const groups = new Map<string, ProjectWorkspaceGroup>();
   for (const workspace of workspaces) {
@@ -31,6 +37,14 @@ export function groupWorkspacesByProject(
       projectId: workspace.projectId,
       projectDisplayName: workspace.projectDisplayName,
       workspaces: [workspace],
+    });
+  }
+  for (const project of projects) {
+    if (groups.has(project.projectId)) continue;
+    groups.set(project.projectId, {
+      projectId: project.projectId,
+      projectDisplayName: project.projectDisplayName,
+      workspaces: [],
     });
   }
   const ordered = [...groups.values()];

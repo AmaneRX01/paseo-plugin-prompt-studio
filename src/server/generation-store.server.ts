@@ -28,7 +28,7 @@ import {
   GenerationSettingsRepository,
 } from "./storage/generations.server";
 import { hash } from "./storage/filesystem.server";
-import { PromptStudioStore } from "./store.server";
+import { PromptStudioStore, type ResolvedSourceProject } from "./store.server";
 
 export interface PromptStudioGenerationStoreOptions {
   now?: () => Date;
@@ -105,6 +105,10 @@ export class PromptStudioGenerationStore implements GenerationHandlerStore {
       projectName: draft.summary.scope.projectName ?? linked.name,
       workspaceId: linked.workspaceId,
     };
+  }
+
+  async refreshGenerationProjectLocator(source: ResolvedSourceProject): Promise<void> {
+    await this.store.ensureContainer(source);
   }
 
   private async ensureGenerationEvents(job: GenerationJob): Promise<GenerationJob> {

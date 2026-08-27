@@ -27,7 +27,9 @@ import {
 } from "../ui.client";
 import { errorMessage, formatWhen } from "./studio-formatters.client";
 import { ProjectWorkspacePicker } from "./project-workspace-picker.client";
+import type { ProjectChoice } from "./project-choices.client";
 import type { StudioProjectContext } from "./studio-types.client";
+import type { WorkspaceDirectoryEntry } from "./workspace-directory-state.client";
 import { groupWorkspacesByProject } from "./workspace-groups.client";
 
 const RESOURCE_STALE_TIME_MS = 30_000;
@@ -73,7 +75,10 @@ export interface SendPanelProps {
   sendDisabled?: boolean;
   sendDisabledReason?: string;
   onBusyChange?: (busy: boolean) => void;
-  managedWorkspaceIds: ReadonlySet<string>;
+  workspaces: readonly WorkspaceDirectoryEntry[];
+  projects: readonly ProjectChoice[];
+  workspacesPending: boolean;
+  workspacesError: unknown;
   onOpenSnapshot?: (snapshotId: string) => void;
 }
 
@@ -86,7 +91,10 @@ export function SendPanel({
   sendDisabled,
   sendDisabledReason,
   onBusyChange,
-  managedWorkspaceIds,
+  workspaces,
+  projects,
+  workspacesPending,
+  workspacesError,
   onOpenSnapshot,
 }: SendPanelProps) {
   const { t, locale } = useI18n();
@@ -120,32 +128,19 @@ export function SendPanel({
     staleTime: RESOURCE_STALE_TIME_MS,
     refetchInterval: false,
   });
-  const workspacesQuery = useQuery({
-    queryKey: ["prompt-studio", "paseo-workspaces"],
-    queryFn: () => paseo.workspaces.list({
-      sort: [{ key: "activity_at", direction: "desc" }],
-      page: { limit: 100 },
-    }),
-    staleTime: RESOURCE_STALE_TIME_MS,
-    refetchInterval: false,
-  });
-  const sourceWorkspaces = useMemo(
-    () => (workspacesQuery.data?.entries ?? []).filter((workspace) => !managedWorkspaceIds.has(workspace.id)),
-    [managedWorkspaceIds, workspacesQuery.data?.entries],
-  );
   const currentProjectId = detail.summary.scope.projectId ?? projectContext?.projectId ?? null;
   const workspaceGroups = useMemo(
-    () => groupWorkspacesByProject(sourceWorkspaces, currentProjectId),
-    [currentProjectId, sourceWorkspaces],
+    () => groupWorkspacesByProject(workspaces, currentProjectId, projects),
+    [currentProjectId, projects, workspaces],
   );
   const contextualWorkspace = projectContext?.projectId === currentProjectId
-    ? sourceWorkspaces.find((workspace) => workspace.id === projectContext.workspaceLocatorId) ?? null
+    ? workspaces.find((workspace) => workspace.id === projectContext.workspaceLocatorId) ?? null
     : null;
   const currentProjectWorkspace = contextualWorkspace
-    ?? sourceWorkspaces.find((workspace) => workspace.projectId === currentProjectId)
+    ?? workspaces.find((workspace) => workspace.projectId === currentProjectId)
     ?? null;
   const preferredWorkspaceId = currentProjectWorkspace?.id ?? null;
-  const selectedWorkspace = sourceWorkspaces.find(
+  const selectedWorkspace = workspaces.find(
     (workspace) => workspace.id === workspaceId && workspace.projectId === selectedProjectId,
   ) ?? null;
   const providersQuery = useQuery({
@@ -176,18 +171,19 @@ export function SendPanel({
     if (!workspaceGroups.length) return;
     const defaultTargetKey = `${detail.summary.id}:${currentProjectId ?? "inbox"}`;
     const defaultGroup = workspaceGroups.find((group) => group.projectId === currentProjectId)
+      ?? workspaceGroups.find((group) => group.workspaces.length > 0)
       ?? workspaceGroups[0];
     if (initializedDefaultTargetRef.current !== defaultTargetKey) {
       const defaultWorkspace = currentProjectWorkspace?.projectId === defaultGroup.projectId
         ? currentProjectWorkspace
-        : defaultGroup.workspaces[0];
+        : defaultGroup.workspaces[0] ?? null;
       setSelectedProjectId(defaultGroup.projectId);
       setExpandedProjectId(defaultGroup.projectId);
-      setWorkspaceId(defaultWorkspace.id);
+      setWorkspaceId(defaultWorkspace?.id ?? "");
       initializedDefaultTargetRef.current = defaultTargetKey;
       return;
     }
-    const currentWorkspace = sourceWorkspaces.find((workspace) => workspace.id === workspaceId) ?? null;
+    const currentWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
     const selectedProjectExists = workspaceGroups.some((group) => group.projectId === selectedProjectId);
     if (selectedProjectExists) {
       if (currentWorkspace && currentWorkspace.projectId !== selectedProjectId) setWorkspaceId("");
@@ -201,17 +197,17 @@ export function SendPanel({
     }
     const fallbackWorkspace = currentProjectWorkspace?.projectId === defaultGroup.projectId
       ? currentProjectWorkspace
-      : defaultGroup.workspaces[0];
+      : defaultGroup.workspaces[0] ?? null;
     setSelectedProjectId(defaultGroup.projectId);
     setExpandedProjectId(defaultGroup.projectId);
-    setWorkspaceId(fallbackWorkspace.id);
+    setWorkspaceId(fallbackWorkspace?.id ?? "");
   }, [
     currentProjectId,
     currentProjectWorkspace,
     detail.summary.id,
     expandedProjectId,
     selectedProjectId,
-    sourceWorkspaces,
+    workspaces,
     workspaceGroups,
     workspaceId,
   ]);
@@ -242,7 +238,7 @@ export function SendPanel({
   const agents = useMemo(() => {
     const normalized = agentQuery.trim().toLocaleLowerCase();
     const preferredProjectId = currentProjectId;
-    const workspaceProjects = new Map(sourceWorkspaces.map((workspace) => [workspace.id, workspace.projectId]));
+    const workspaceProjects = new Map(workspaces.map((workspace) => [workspace.id, workspace.projectId]));
     const rank = (agentWorkspaceId: string | undefined) => {
       if (agentWorkspaceId && agentWorkspaceId === preferredWorkspaceId) return 2;
       if (agentWorkspaceId && preferredProjectId && workspaceProjects.get(agentWorkspaceId) === preferredProjectId) return 1;
@@ -254,7 +250,7 @@ export function SendPanel({
         return rank(b.agent.workspaceId) - rank(a.agent.workspaceId)
           || b.agent.updatedAt.localeCompare(a.agent.updatedAt);
       });
-  }, [agentQuery, agentsQuery.data?.entries, currentProjectId, preferredWorkspaceId, sourceWorkspaces]);
+  }, [agentQuery, agentsQuery.data?.entries, currentProjectId, preferredWorkspaceId, workspaces]);
 
   async function send() {
     let target: DispatchTarget;
@@ -405,8 +401,13 @@ export function SendPanel({
               selectedWorkspaceId={workspaceId || null}
               theme={theme}
             />
-            {workspacesQuery.isPending ? <ActivityIndicator color={theme.colors.accent} /> : null}
-            {workspacesQuery.isError ? <Hint danger theme={theme}>{errorMessage(workspacesQuery.error)}</Hint> : null}
+            {workspacesPending ? <ActivityIndicator color={theme.colors.accent} /> : null}
+            {workspacesError ? <Hint danger theme={theme}>{errorMessage(workspacesError)}</Hint> : null}
+            {!workspacesPending
+              && selectedProjectId
+              && workspaceGroups.find((group) => group.projectId === selectedProjectId)?.workspaces.length === 0
+              ? <Hint theme={theme}>{t("send.project.noWorkspaces")}</Hint>
+              : null}
 
             <FieldLabel theme={theme}>{t("send.provider.required")}</FieldLabel>
             {providersQuery.isPending ? <ActivityIndicator color={theme.colors.accent} /> : null}

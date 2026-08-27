@@ -48,3 +48,16 @@ test("the Draft Project is placed first without disturbing other activity order"
   assert.deepEqual(groups.map((group) => group.projectId), ["project_a", "project_b", "project_c"]);
   assert.deepEqual(groups[0].workspaces.map((workspace) => workspace.id), ["ws_a_recent", "ws_a_old"]);
 });
+
+test("Projects without Workspaces remain visible as empty groups", () => {
+  const groups = groupWorkspacesByProject([], null, [{
+    projectId: "project_empty",
+    projectDisplayName: "Empty",
+  }]);
+
+  assert.deepEqual(groups, [{
+    projectId: "project_empty",
+    projectDisplayName: "Empty",
+    workspaces: [],
+  }]);
+});

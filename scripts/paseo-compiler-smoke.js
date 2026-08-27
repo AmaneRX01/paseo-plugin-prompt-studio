@@ -100,8 +100,14 @@ function resolveCompilerPath(desktopPath) {
   );
 }
 
+function resolveCompilerContainerPath(desktopPath, compilerPath) {
+  return process.platform === "win32"
+    ? path.join(path.dirname(desktopPath), "resources", "app.asar")
+    : compilerPath;
+}
+
 function buildPayload(entryPath, compilerUrl) {
-  const entryLiteral = JSON.stringify(pathToFileURL(entryPath).href);
+  const entryLiteral = JSON.stringify(entryPath);
   const compilerLiteral = JSON.stringify(compilerUrl);
 
   return `
@@ -205,11 +211,15 @@ function main() {
   const desktopPath = resolveDesktopPath();
   const executable = resolveExecutable(desktopPath);
   const compilerPath = resolveCompilerPath(desktopPath);
+  const compilerContainerPath = resolveCompilerContainerPath(desktopPath, compilerPath);
 
-  if (!existsSync(compilerPath)) {
+  // Ordinary Windows Node cannot stat paths inside Electron's app.asar, while
+  // the Paseo Electron runtime used below can import them. Validate the archive
+  // itself on Windows and let the runtime report a missing internal compiler.
+  if (!existsSync(compilerContainerPath)) {
     throw new Error(
-      `Paseo plugin compiler not found at: ${compilerPath}\n` +
-        "Verify that Paseo Desktop is installed and that PASEO_DESKTOP_PATH points to the correct location."
+      `Paseo plugin compiler container not found at: ${compilerContainerPath}\n` +
+      "Verify that Paseo Desktop is installed and that PASEO_DESKTOP_PATH points to the correct location."
     );
   }
 

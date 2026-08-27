@@ -49,3 +49,16 @@ test("vault and legacy vault Workspace paths are excluded without matching sibli
   assert.equal(isPathInsideVault("/Users/me/Vault", "/Users/me/Vault/legacy"), true);
   assert.equal(isPathInsideVault("/Users/me/Vault", "/Users/me/vault/legacy"), false);
 });
+
+test("a Project without a Workspace remains visible but has no scope locator", () => {
+  const choices = projectChoicesFromWorkspaces([], [{
+    projectId: "prj_empty",
+    projectDisplayName: "Empty Project",
+  }]);
+
+  assert.deepEqual(choices, [{
+    projectId: "prj_empty",
+    projectDisplayName: "Empty Project",
+    workspaceLocatorId: null,
+  }]);
+});

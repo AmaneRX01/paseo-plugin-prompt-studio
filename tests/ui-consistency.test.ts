@@ -241,6 +241,21 @@ test("new Agent send targets choose a Project before an expanded Workspace", () 
   assert.match(pickerSource, /\{expanded \? \(\s*<Text[^]*send\.project\.workspaceCount/);
 });
 
+test("Workspace and Project choices use the subscribed paged directory and manual recovery refresh", () => {
+  const studioSource = readFileSync(join(clientRoot, "studio.client.tsx"), "utf8");
+  const directorySource = readFileSync(join(clientRoot, "studio", "workspace-directory.client.ts"), "utf8");
+  const stateSource = readFileSync(join(clientRoot, "studio", "workspace-directory-state.client.ts"), "utf8");
+
+  assert.match(studioSource, /useWorkspaceDirectory\(\)/);
+  assert.match(studioSource, /workspaceDirectoryQuery\.refetch\(\)/);
+  assert.doesNotMatch(studioSource, /paseo\.workspaces\.list/);
+  assert.match(directorySource, /paseo\.workspaces\.subscribe/);
+  assert.match(directorySource, /refetchOnMount: "always"/);
+  assert.match(directorySource, /refetchInterval: 60_000/);
+  assert.match(stateSource, /for \(let pageIndex = 0; pageIndex < MAX_PAGES/);
+  assert.match(stateSource, /emptyProjects/);
+});
+
 test("screens do not reintroduce numeric corner radii or hard-coded colors", () => {
   const violations: string[] = [];
   for (const path of clientScreens(clientRoot)) {

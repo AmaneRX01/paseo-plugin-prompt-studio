@@ -41,6 +41,7 @@ const DRAFT_ID = `dr_${"a".repeat(16)}`;
 const GENERATION_ID = `gn_${"b".repeat(24)}`;
 const PROJECT_ID = "prj_external";
 const WORKSPACE_ID = "wks_source";
+const REPLACEMENT_WORKSPACE_ID = "wks_source_replacement";
 const ROOT_WORKSPACE_ID = "wks_root";
 
 function digest(value: string): string {
@@ -121,6 +122,7 @@ function makeJob(input: GenerationStartInput, context: GenerationPreparationCont
 
 class FakeStore implements GenerationRuntimeStore {
   job: GenerationJob | null = null;
+  refreshedSource: { projectId: string; workspaceId: string; rootPath: string; name: string } | null = null;
   hideUnresolvedOnce = false;
   configuration: GenerationProviderConfig = {
     provider: "codex",
@@ -141,6 +143,15 @@ class FakeStore implements GenerationRuntimeStore {
 
   async getGenerationProject(_draftId: string) {
     return { projectId: PROJECT_ID, projectName: "Example", workspaceId: WORKSPACE_ID };
+  }
+
+  async refreshGenerationProjectLocator(source: {
+    projectId: string;
+    workspaceId: string;
+    rootPath: string;
+    name: string;
+  }): Promise<void> {
+    this.refreshedSource = source;
   }
 
   async findUnresolvedGeneration(_draftId: string): Promise<GenerationJob | null> {
@@ -331,6 +342,7 @@ class FakePaseo implements GenerationPaseo {
   createCount = 0;
   agentListCount = 0;
   sourceWorkspaceAvailable = true;
+  replacementWorkspaceAvailable = false;
   createBehavior: "success" | "throw" | "accept-then-throw" = "success";
   createdOptions: Parameters<GenerationWorkspaceHandle["agents"]["create"]>[0] | null = null;
 
@@ -369,6 +381,12 @@ class FakePaseo implements GenerationPaseo {
   readonly workspaces = {
     ref: (workspaceId: string) => this.workspace(workspaceId),
     open: async (_root: string) => this.workspace(ROOT_WORKSPACE_ID),
+    list: async () => ({
+      entries: this.replacementWorkspaceAvailable
+        ? [{ id: REPLACEMENT_WORKSPACE_ID, projectId: PROJECT_ID }]
+        : [],
+      pageInfo: { nextCursor: null, hasMore: false },
+    }),
   };
 
   readonly agents = {
@@ -529,6 +547,7 @@ test("start persists and claims a job before one Agent create with stable safety
   const result = await coordinator.start(startInput({ allowProjectRead: true }));
 
   assert.equal(result.job.status, "running");
+  assert.equal(result.job.project.workspaceId, WORKSPACE_ID);
   assert.equal(paseo.createCount, 1);
   assert.deepEqual(store.calls.slice(0, 4), ["prepare", "claim", "create", "running"]);
   assert.equal(paseo.createdOptions?.requestId, result.job.requestId);
@@ -541,6 +560,20 @@ test("start persists and claims a job before one Agent create with stable safety
   const retried = await coordinator.start(startInput({ allowProjectRead: true }));
   assert.equal(retried.job.id, result.job.id);
   assert.equal(paseo.createCount, 1, "a running generation must never create a second Agent");
+});
+
+test("generation replaces an archived Project locator with a current Workspace before launch", async (t) => {
+  const { coordinator, store, paseo } = await fixture(t);
+  paseo.sourceWorkspaceAvailable = false;
+  paseo.replacementWorkspaceAvailable = true;
+
+  const result = await coordinator.start(startInput());
+
+  assert.equal(result.job.status, "running");
+  assert.equal(result.job.project.workspaceId, REPLACEMENT_WORKSPACE_ID);
+  assert.equal(store.refreshedSource?.workspaceId, REPLACEMENT_WORKSPACE_ID);
+  assert.equal(store.refreshedSource?.projectId, PROJECT_ID);
+  assert.equal(store.refreshedSource?.rootPath, paseo.projectRoot);
 });
 
 test("a lost create acknowledgement reconciles by stable labels instead of duplicating", async (t) => {

@@ -7,7 +7,12 @@ export interface ProjectWorkspaceLocator {
 export interface ProjectChoice {
   projectId: string;
   projectDisplayName: string;
-  workspaceLocatorId: string;
+  workspaceLocatorId: string | null;
+}
+
+export interface EmptyProjectChoice {
+  projectId: string;
+  projectDisplayName: string;
 }
 
 function comparablePath(value: string, windows: boolean): string {
@@ -29,6 +34,7 @@ export function isPathInsideVault(vaultRoot: string, candidatePath: string): boo
  */
 export function projectChoicesFromWorkspaces(
   workspaces: readonly ProjectWorkspaceLocator[],
+  emptyProjects: readonly EmptyProjectChoice[] = [],
 ): ProjectChoice[] {
   const projects = new Map<string, ProjectChoice>();
   for (const workspace of workspaces) {
@@ -37,6 +43,14 @@ export function projectChoicesFromWorkspaces(
       projectId: workspace.projectId,
       projectDisplayName: workspace.projectDisplayName,
       workspaceLocatorId: workspace.id,
+    });
+  }
+  for (const project of emptyProjects) {
+    if (projects.has(project.projectId)) continue;
+    projects.set(project.projectId, {
+      projectId: project.projectId,
+      projectDisplayName: project.projectDisplayName,
+      workspaceLocatorId: null,
     });
   }
   return [...projects.values()];

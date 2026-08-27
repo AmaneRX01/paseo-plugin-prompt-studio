@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type PluginTheme, usePaseo, useRpc } from "@getpaseo/plugin";
+import { type PluginTheme, useRpc } from "@getpaseo/plugin";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -89,6 +89,8 @@ import type {
   StudioViewProps,
 } from "./studio/studio-types.client";
 import { WorklogView } from "./studio/worklog-view.client";
+import { useWorkspaceDirectory } from "./studio/workspace-directory.client";
+import type { WorkspaceDirectoryEntry } from "./studio/workspace-directory-state.client";
 import {
   Card,
   Description,
@@ -264,7 +266,9 @@ function DraftEditor({
   onTagsChanged,
   onNavigationStateChange,
   onDeleted,
-  managedWorkspaceIds,
+  workspaceEntries,
+  workspaceDirectoryPending,
+  workspaceDirectoryError,
   initialSnapshotId,
   autoFocusBody = false,
   onSnapshotClose,
@@ -284,7 +288,9 @@ function DraftEditor({
   onTagsChanged: () => void;
   onNavigationStateChange: (draftId: string, state: NavigationBlockState | null) => void;
   onDeleted: (draftId: string) => void;
-  managedWorkspaceIds: ReadonlySet<string>;
+  workspaceEntries: readonly WorkspaceDirectoryEntry[];
+  workspaceDirectoryPending: boolean;
+  workspaceDirectoryError: unknown;
   initialSnapshotId?: string | null;
   autoFocusBody?: boolean;
   onSnapshotClose?: () => void;
@@ -540,7 +546,7 @@ function DraftEditor({
     }
     const project = projects.find((item) => item.projectId === projectId);
     if (projectId && (!project || !project.workspaceLocatorId)) return;
-    const target: DraftScopeTarget = project
+    const target: DraftScopeTarget = project?.workspaceLocatorId
       ? { kind: "project", projectId: project.projectId, workspaceId: project.workspaceLocatorId }
       : { kind: "inbox" };
     const selection = scopeChangeQueue.current?.select(
@@ -1229,7 +1235,10 @@ function DraftEditor({
           ? t("editor.send.draft")
           : undefined}
       onBusyChange={setDispatchBusy}
-      managedWorkspaceIds={managedWorkspaceIds}
+      workspaces={workspaceEntries}
+      projects={projects}
+      workspacesPending={workspaceDirectoryPending}
+      workspacesError={workspaceDirectoryError}
       onOpenSnapshot={setSnapshotId}
     />
   );
@@ -1278,7 +1287,6 @@ export function StudioView({
 }: StudioViewProps) {
   const { t } = useI18n();
   const palette = useMemo(() => paletteOf(theme), [theme]);
-  const paseo = usePaseo();
   const queryClient = useQueryClient();
   const scanCatalog = useRpc(catalogScanRpc);
   const createDraft = useRpc(draftCreateRpc);
@@ -1303,6 +1311,7 @@ export function StudioView({
   const [navigationBlock, setNavigationBlock] = useState<{ draftId: string; state: NavigationBlockState } | null>(null);
   const [navigationWarning, setNavigationWarning] = useState<string | null>(null);
   const ensureContainer = useRpc(containerEnsureRpc);
+  const workspaceDirectoryQuery = useWorkspaceDirectory();
   const navigationBlockRef = useRef<{ draftId: string; state: NavigationBlockState } | null>(null);
 
   useEffect(() => {
@@ -1332,15 +1341,6 @@ export function StudioView({
     refetchOnWindowFocus: false,
     refetchInterval: false,
   });
-  const workspacesQuery = useQuery({
-    queryKey: ["prompt-studio", "paseo-workspaces"],
-    queryFn: () => paseo.workspaces.list({
-      sort: [{ key: "activity_at", direction: "desc" }],
-      page: { limit: 100 },
-    }),
-    staleTime: CATALOG_STALE_TIME_MS,
-    refetchInterval: false,
-  });
   const registeredWorkspaceIds = useMemo(() => new Set(
     (catalogQuery.data?.containers ?? []).flatMap((container) =>
       container.registration.status === "registered" ? [container.registration.workspaceId] : [],
@@ -1350,26 +1350,35 @@ export function StudioView({
     const ids = new Set(registeredWorkspaceIds);
     const vaultRoot = catalogQuery.data?.rootPath;
     if (vaultRoot) {
-      for (const workspace of workspacesQuery.data?.entries ?? []) {
+      for (const workspace of workspaceDirectoryQuery.data?.entries ?? []) {
         if (isPathInsideVault(vaultRoot, workspace.projectRootPath)) ids.add(workspace.id);
       }
     }
     return ids;
-  }, [catalogQuery.data?.rootPath, registeredWorkspaceIds, workspacesQuery.data?.entries]);
+  }, [catalogQuery.data?.rootPath, registeredWorkspaceIds, workspaceDirectoryQuery.data?.entries]);
   const workspaces = useMemo(
-    () => (workspacesQuery.data?.entries ?? []).filter((workspace) => !managedWorkspaceIds.has(workspace.id)),
-    [managedWorkspaceIds, workspacesQuery.data?.entries],
+    () => (workspaceDirectoryQuery.data?.entries ?? []).filter((workspace) => !managedWorkspaceIds.has(workspace.id)),
+    [managedWorkspaceIds, workspaceDirectoryQuery.data?.entries],
   );
-  const projectChoices = useMemo(() => projectChoicesFromWorkspaces(workspaces), [workspaces]);
+  const emptyProjects = useMemo(() => {
+    const vaultRoot = catalogQuery.data?.rootPath;
+    return (workspaceDirectoryQuery.data?.emptyProjects ?? []).filter(
+      (project) => !vaultRoot || !isPathInsideVault(vaultRoot, project.projectRootPath),
+    );
+  }, [catalogQuery.data?.rootPath, workspaceDirectoryQuery.data?.emptyProjects]);
+  const projectChoices = useMemo(
+    () => projectChoicesFromWorkspaces(workspaces, emptyProjects),
+    [emptyProjects, workspaces],
+  );
   useEffect(() => {
-    if (!workspacesQuery.isSuccess || projectIds === null) return;
+    if (!workspaceDirectoryQuery.isSuccess || projectIds === null) return;
     const next = normalizeNullableFilterSelection(
       projectIds,
       projectChoices.map((project) => project.projectId),
     );
     if (next !== null && next.length === projectIds.length) return;
     setProjectIds(next);
-  }, [projectChoices, projectIds, workspacesQuery.isSuccess]);
+  }, [projectChoices, projectIds, workspaceDirectoryQuery.isSuccess]);
   const drafts = catalogQuery.data?.drafts ?? [];
   const tagTree = catalogQuery.data?.tagTree ?? [];
   const tagSuggestions = useMemo(() => tagSuggestionsFromTree(tagTree), [tagTree]);
@@ -1402,20 +1411,35 @@ export function StudioView({
     setCatalogRefreshing(true);
     setCatalogRefreshError(null);
     try {
-      const rebuilt = await scanCatalog({
-        query: search,
-        statuses,
-        projectIds: catalogProjectIds,
-        tagPaths: tagPaths.length ? tagPaths : null,
-        rebuild: true,
-      });
-      queryClient.setQueryData(catalogQueryKey, rebuilt);
+      const [catalogResult, workspaceResult] = await Promise.allSettled([
+        scanCatalog({
+          query: search,
+          statuses,
+          projectIds: catalogProjectIds,
+          tagPaths: tagPaths.length ? tagPaths : null,
+          rebuild: true,
+        }),
+        workspaceDirectoryQuery.refetch(),
+      ]);
+      if (catalogResult.status === "fulfilled") queryClient.setQueryData(catalogQueryKey, catalogResult.value);
+      if (catalogResult.status === "rejected") throw catalogResult.reason;
+      if (workspaceResult.status === "rejected") throw workspaceResult.reason;
+      if (workspaceResult.value.isError) throw workspaceResult.value.error;
     } catch (cause) {
       setCatalogRefreshError(errorMessage(cause));
     } finally {
       setCatalogRefreshing(false);
     }
-  }, [catalogProjectIds, catalogQueryKey, queryClient, scanCatalog, search, statuses, tagPaths]);
+  }, [
+    catalogProjectIds,
+    catalogQueryKey,
+    queryClient,
+    scanCatalog,
+    search,
+    statuses,
+    tagPaths,
+    workspaceDirectoryQuery.refetch,
+  ]);
 
   const applyTagSummariesToDraftCaches = useCallback((changedDrafts: CatalogScanResult["drafts"]) => {
     for (const summary of changedDrafts) {
@@ -1659,7 +1683,7 @@ export function StudioView({
       projectChoices={projectChoices}
       scratchpad={scratchpad}
       creating={creating}
-      refreshing={catalogRefreshing}
+      refreshing={catalogRefreshing || workspaceDirectoryQuery.isFetching}
       pending={catalogQuery.isPending}
       createError={createError}
       bulkLabels={draftBulkLabels}
@@ -1721,7 +1745,9 @@ export function StudioView({
           : current);
         void catalogQuery.refetch();
       }}
-      managedWorkspaceIds={managedWorkspaceIds}
+      workspaceEntries={workspaces}
+      workspaceDirectoryPending={workspaceDirectoryQuery.isPending}
+      workspaceDirectoryError={workspaceDirectoryQuery.error}
       initialSnapshotId={selectedSnapshotId}
       autoFocusBody={autoFocusDraftId === selectedDraftId}
       onSnapshotClose={() => setSelectedSnapshotId(null)}

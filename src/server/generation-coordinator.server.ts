@@ -12,9 +12,10 @@ import type {
   GenerationTask,
 } from "../shared/generation.shared";
 import {
-  resolveSourceProject,
+  resolveAvailableSourceProject,
   type PaseoWorkspaceRegistrar,
 } from "./project-registration.server";
+import type { ResolvedSourceProject } from "./store.server";
 import {
   buildGenerationAgentPolicy,
   type GenerationAgentPolicy,
@@ -58,6 +59,7 @@ export interface GenerationRuntimeStore {
   isManagedPath(candidatePath: string): Promise<boolean>;
   getGenerationProviderConfig(task: GenerationTask): Promise<GenerationProviderConfig>;
   getGenerationProject(draftId: string): Promise<GenerationProject>;
+  refreshGenerationProjectLocator(source: ResolvedSourceProject): Promise<void>;
   findUnresolvedGeneration(draftId: string): Promise<GenerationJob | null>;
   previewGeneration(
     input: GenerationPreviewInput,
@@ -308,9 +310,21 @@ export function createGenerationCoordinator(
   store: GenerationRuntimeStore,
   paseo: GenerationPaseo,
 ) {
+  async function resolveProject(project: GenerationProject): Promise<{
+    project: GenerationProject;
+    root: string;
+  }> {
+    const source = await resolveAvailableSourceProject(paseo, project.projectId, project.workspaceId);
+    const root = await assertExternalProjectRoot(store, source.rootPath);
+    await store.refreshGenerationProjectLocator(source);
+    return {
+      project: { ...project, workspaceId: source.workspaceId },
+      root,
+    };
+  }
+
   async function resolveProjectRoot(project: GenerationProject): Promise<string> {
-    const source = await resolveSourceProject(paseo, project.projectId, project.workspaceId);
-    return assertExternalProjectRoot(store, source.rootPath);
+    return (await resolveProject(project)).root;
   }
 
   async function resolveContext(
@@ -322,7 +336,8 @@ export function createGenerationCoordinator(
       store.getGenerationProviderConfig(task),
       store.getGenerationProject(draftId),
     ]);
-    const projectRoot = await resolveProjectRoot(project);
+    const resolvedProject = await resolveProject(project);
+    const projectRoot = resolvedProject.root;
     const contextWindowMaxTokens = await validateProviderSelection(paseo, configuration, projectRoot);
     const protection = buildGenerationAgentPolicy({
       selection: configuration,
@@ -333,7 +348,7 @@ export function createGenerationCoordinator(
     }).protection;
     return {
       configuration,
-      project,
+      project: resolvedProject.project,
       projectRoot,
       contextWindowMaxTokens,
       protection,

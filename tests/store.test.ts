@@ -37,13 +37,18 @@ let draftAutosaveRpc: typeof import("../src/shared/contracts.shared").draftAutos
 let draftTagsSetRpc: typeof import("../src/shared/contracts.shared").draftTagsSetRpc;
 let ensureAndRegisterInbox: typeof import("../src/server/project-registration.server").ensureAndRegisterInbox;
 let ensureAndRegisterProjectContainer: typeof import("../src/server/project-registration.server").ensureAndRegisterProjectContainer;
+let resolveAvailableSourceProject: typeof import("../src/server/project-registration.server").resolveAvailableSourceProject;
 let createDispatchCoordinator: typeof import("../src/server/handlers.server").createDispatchCoordinator;
 let createHandlers: typeof import("../src/server/handlers.server").createHandlers;
 let projectLinkWarnings: typeof import("../src/server/handlers.server").projectLinkWarnings;
 test.before(async () => {
   ({ draftAutosaveRpc, draftTagsSetRpc } = await import("../src/shared/contracts.shared"));
   ({ PromptStudioStore } = await import("../src/server/store.server"));
-  ({ ensureAndRegisterInbox, ensureAndRegisterProjectContainer } = await import("../src/server/project-registration.server"));
+  ({
+    ensureAndRegisterInbox,
+    ensureAndRegisterProjectContainer,
+    resolveAvailableSourceProject,
+  } = await import("../src/server/project-registration.server"));
   ({ createDispatchCoordinator, createHandlers, projectLinkWarnings } = await import("../src/server/handlers.server"));
 });
 
@@ -477,6 +482,53 @@ test("container creation immediately registers through workspaces.open and retri
     assert.equal(retried.container.registration.projectId, "prj_companion_retry");
     assert.equal(retried.container.registration.workspaceId, "wks_companion_retry");
   }
+});
+
+test("an archived Project locator is replaced with a current Workspace and persisted", async (t) => {
+  const { store } = await makeStore(t);
+  const replacementWorkspaceId = "wks_source_replacement";
+  const paseo = {
+    workspaces: {
+      ref: (workspaceId: string) => ({
+        id: workspaceId,
+        projectId: source.projectId,
+        refresh: async () => workspaceId === replacementWorkspaceId
+          ? {
+              id: workspaceId,
+              projectId: source.projectId,
+              projectDisplayName: source.name,
+              projectRootPath: source.rootPath,
+            }
+          : null,
+      }),
+      list: async () => ({
+        entries: [{ id: replacementWorkspaceId, projectId: source.projectId }],
+        pageInfo: { nextCursor: null, hasMore: false },
+      }),
+      open: async (directory: string) => ({
+        id: "wks_prompt_studio",
+        projectId: "prj_prompt_studio",
+        refresh: async () => ({
+          id: "wks_prompt_studio",
+          projectId: "prj_prompt_studio",
+          projectDisplayName: "Prompt Studio",
+          projectRootPath: directory,
+        }),
+      }),
+    },
+  };
+
+  const resolved = await resolveAvailableSourceProject(
+    paseo,
+    source.projectId,
+    "wks_archived",
+  );
+  assert.equal(resolved.workspaceId, replacementWorkspaceId);
+
+  await ensureAndRegisterProjectContainer(store, paseo, source.projectId, "wks_archived");
+  const linked = await store.getLinkedProjects();
+  assert.equal(linked[0]?.workspaceId, replacementWorkspaceId);
+  assert.equal(linked[0]?.rootPath, source.rootPath);
 });
 
 test("Inbox registration also uses workspaces.open and rejects missing Project identity", async (t) => {

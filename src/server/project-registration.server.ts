@@ -24,6 +24,14 @@ export interface PaseoWorkspaceRegistrar {
   workspaces: {
     ref(workspaceId: string): PaseoWorkspaceHandleLike;
     open(path: string): Promise<PaseoWorkspaceHandleLike>;
+    list?(options: {
+      filter: { projectId: string };
+      sort: Array<{ key: "activity_at"; direction: "desc" }>;
+      page: { limit: number; cursor?: string };
+    }): Promise<{
+      entries: Array<{ id: string; projectId: string }>;
+      pageInfo: { nextCursor: string | null; hasMore: boolean };
+    }>;
   };
 }
 
@@ -53,6 +61,38 @@ export async function resolveSourceProject(
     rootPath: workspace.projectRootPath,
     name: workspace.projectDisplayName,
   };
+}
+
+export async function resolveAvailableSourceProject(
+  paseo: PaseoWorkspaceRegistrar,
+  projectId: string,
+  preferredWorkspaceId: string,
+): Promise<ResolvedSourceProject> {
+  try {
+    return await resolveSourceProject(paseo, projectId, preferredWorkspaceId);
+  } catch (preferredError) {
+    if (!paseo.workspaces.list) throw preferredError;
+    let cursor: string | undefined;
+    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+      const page = await paseo.workspaces.list({
+        filter: { projectId },
+        sort: [{ key: "activity_at", direction: "desc" }],
+        page: { limit: 200, ...(cursor ? { cursor } : {}) },
+      });
+      for (const candidate of page.entries) {
+        if (candidate.projectId !== projectId || candidate.id === preferredWorkspaceId) continue;
+        try {
+          return await resolveSourceProject(paseo, projectId, candidate.id);
+        } catch {
+          // Continue through the current Project's live Workspace locators.
+        }
+      }
+      if (!page.pageInfo.hasMore || !page.pageInfo.nextCursor) break;
+      cursor = page.pageInfo.nextCursor;
+    }
+    const message = preferredError instanceof Error ? preferredError.message : String(preferredError);
+    throw new Error(`Paseo Project ${projectId} has no available Workspace locator: ${message}`);
+  }
 }
 
 async function registerContainer(
@@ -116,7 +156,7 @@ export async function ensureAndRegisterProjectContainer(
   projectId: string,
   workspaceId: string,
 ): Promise<EnsureAndRegisterResult> {
-  const source = await resolveSourceProject(paseo, projectId, workspaceId);
+  const source = await resolveAvailableSourceProject(paseo, projectId, workspaceId);
   const managedSelf = await store.findContainerByRoot(source.rootPath);
   if (managedSelf) {
     return registerContainer(store, paseo, await store.ensureContainer(null));
