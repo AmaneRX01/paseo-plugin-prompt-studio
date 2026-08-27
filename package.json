@@ -13,7 +13,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "smoke:compiler": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/paseo-compiler-smoke.ps1",
+    "smoke:compiler": "node ./scripts/paseo-compiler-smoke.js",
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {

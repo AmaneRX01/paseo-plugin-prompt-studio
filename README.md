@@ -42,6 +42,16 @@ The Paseo plugin API is currently experimental and may introduce breaking change
 
 Install dependencies and validate the project:
 
+**macOS / Linux**
+
+```bash
+npm install
+npm run check
+npm run smoke:compiler
+```
+
+**Windows**
+
 ```powershell
 npm install
 npm run check
@@ -49,6 +59,15 @@ npm run smoke:compiler
 ```
 
 Install the plugin from an absolute path and confirm that it is running:
+
+**macOS / Linux**
+
+```bash
+paseo plugin install /path/to/paseo-plugin-prompt-studio
+paseo plugin ls --json
+```
+
+**Windows**
 
 ```powershell
 paseo plugin install D:\path\to\paseo-plugin-prompt-studio
@@ -58,6 +77,16 @@ paseo plugin ls --json
 The expected runtime ID is `prompt-studio`.
 
 After changing source files, validate and reload the installed plugin:
+
+**macOS / Linux**
+
+```bash
+npm run check
+paseo plugin reload prompt-studio
+paseo plugin logs prompt-studio
+```
+
+**Windows**
 
 ```powershell
 npm run check
@@ -87,9 +116,8 @@ Open **Worklog** for a read-only activity timeline. From a Workspace or Agent co
 
 By default, Prompt Studio stores its plaintext vault at:
 
-```text
-%USERPROFILE%\.paseo\prompt-studio
-```
+- macOS / Linux: `~/.paseo/prompt-studio`
+- Windows: `%USERPROFILE%\.paseo\prompt-studio`
 
 Set `PASEO_PROMPT_STUDIO_HOME` before starting the daemon to choose another location.
 
@@ -116,6 +144,17 @@ Paseo 0.5.1 does not expose a provider-independent read allowlist or an OS/conta
 File suffixes enforce runtime boundaries: client modules may import client and shared modules, server modules may import server and shared modules, and shared modules must remain safe for both runtimes.
 
 ## Validation
+
+**macOS / Linux**
+
+```bash
+npm run typecheck
+npm test
+npm run check
+npm run smoke:compiler
+```
+
+**Windows**
 
 ```powershell
 npm run typecheck

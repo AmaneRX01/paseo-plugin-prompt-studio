@@ -145,6 +145,16 @@ Paseo plugins are trusted and unsandboxed. Server code can access files, process
 
 Run from the repository root:
 
+**macOS / Linux**
+
+```bash
+npm install
+npm run check
+npm run smoke:compiler
+```
+
+**Windows**
+
 ```powershell
 npm install
 npm run check
@@ -156,6 +166,15 @@ npm run smoke:compiler
 
 ### 5.3 Install the plugin
 
+**macOS / Linux**
+
+```bash
+paseo plugin install /path/to/paseo-plugin-prompt-studio
+paseo plugin ls --json
+```
+
+**Windows**
+
 ```powershell
 paseo plugin install D:\path\to\paseo-plugin-prompt-studio
 paseo plugin ls --json
@@ -164,6 +183,16 @@ paseo plugin ls --json
 Confirm that the runtime ID is `prompt-studio`, its state is `running`, and no load error is present.
 
 ### 5.4 Reload after source changes
+
+**macOS / Linux**
+
+```bash
+npm run check
+paseo plugin reload prompt-studio
+paseo plugin logs prompt-studio
+```
+
+**Windows**
 
 ```powershell
 npm run check
@@ -286,9 +315,8 @@ When a scan encounters one malformed JSON file, Prompt Studio reports a warning 
 
 The default plaintext root is:
 
-```text
-%USERPROFILE%\.paseo\prompt-studio
-```
+- macOS / Linux: `~/.paseo/prompt-studio`
+- Windows: `%USERPROFILE%\.paseo\prompt-studio`
 
 Set `PASEO_PROMPT_STUDIO_HOME` before starting the daemon to use another location. This changes canonical data placement; back up and verify existing data before migrating it.
 
@@ -382,6 +410,17 @@ Runtime boundaries are strict:
 
 ### 11.1 Commands
 
+**macOS / Linux**
+
+```bash
+npm run typecheck
+npm test
+npm run check
+npm run smoke:compiler
+```
+
+**Windows**
+
 ```powershell
 npm run typecheck
 npm test
@@ -426,12 +465,30 @@ Confirm that plugins are enabled on the target daemon, `paseo plugin ls` reports
 
 ### The UI does not change after a source edit
 
+**macOS / Linux**
+
+```bash
+npm run check
+paseo plugin reload prompt-studio
+```
+
+**Windows**
+
 ```powershell
 npm run check
 paseo plugin reload prompt-studio
 ```
 
 ### An RPC fails or the plugin does not start
+
+**macOS / Linux**
+
+```bash
+paseo plugin ls --json
+paseo plugin logs prompt-studio
+```
+
+**Windows**
 
 ```powershell
 paseo plugin ls --json

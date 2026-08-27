@@ -2,6 +2,18 @@
 
 ## Common commands
 
+**macOS / Linux**
+
+```bash
+npm install
+npm run typecheck
+npm test
+npm run check
+npm run smoke:compiler
+```
+
+**Windows**
+
 ```powershell
 npm install
 npm run typecheck
@@ -20,6 +32,20 @@ npm run smoke:compiler
 4. Add integration coverage under `tests/` when behavior changes.
 5. Run `npm run check`. Also run `npm run smoke:compiler` after changing the entry point, RPC registration, or a cross-runtime import.
 6. For an installed plugin, apply source changes with `paseo plugin reload prompt-studio`, then inspect `paseo plugin logs prompt-studio`.
+
+   **macOS / Linux**
+
+   ```bash
+   paseo plugin reload prompt-studio
+   paseo plugin logs prompt-studio
+   ```
+
+   **Windows**
+
+   ```powershell
+   paseo plugin reload prompt-studio
+   paseo plugin logs prompt-studio
+   ```
 
 ## High-risk test areas
 

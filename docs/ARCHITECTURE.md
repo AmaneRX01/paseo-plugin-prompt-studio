@@ -27,7 +27,7 @@ Normal Paseo operations use the host SDK. Only plugin-specific filesystem behavi
 
 ## Plaintext vault layout
 
-The default root is `%USERPROFILE%\.paseo\prompt-studio`. Set `PASEO_PROMPT_STUDIO_HOME` before starting the daemon to override it.
+The default root is `~/.paseo/prompt-studio` on macOS / Linux and `%USERPROFILE%\.paseo\prompt-studio` on Windows. Set `PASEO_PROMPT_STUDIO_HOME` before starting the daemon to override it.
 
 ```text
 prompt-studio/
