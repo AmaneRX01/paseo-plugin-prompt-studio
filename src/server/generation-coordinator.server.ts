@@ -59,7 +59,7 @@ export interface GenerationRuntimeStore {
   isManagedPath(candidatePath: string): Promise<boolean>;
   getGenerationProviderConfig(task: GenerationTask): Promise<GenerationProviderConfig>;
   getGenerationProject(draftId: string): Promise<GenerationProject>;
-  refreshGenerationProjectLocator(source: ResolvedSourceProject): Promise<void>;
+  refreshGenerationProjectLink(source: ResolvedSourceProject): Promise<void>;
   findUnresolvedGeneration(draftId: string): Promise<GenerationJob | null>;
   previewGeneration(
     input: GenerationPreviewInput,
@@ -314,11 +314,11 @@ export function createGenerationCoordinator(
     project: GenerationProject;
     root: string;
   }> {
-    const source = await resolveAvailableSourceProject(paseo, project.projectId, project.workspaceId);
+    const source = await resolveAvailableSourceProject(paseo, project.projectId);
     const root = await assertExternalProjectRoot(store, source.rootPath);
-    await store.refreshGenerationProjectLocator(source);
+    await store.refreshGenerationProjectLink(source);
     return {
-      project: { ...project, workspaceId: source.workspaceId },
+      project,
       root,
     };
   }
@@ -545,7 +545,6 @@ export function createGenerationCoordinator(
       try {
         context = preparedContext
           && preparedContext.project.projectId === job.project.projectId
-          && preparedContext.project.workspaceId === job.project.workspaceId
           && JSON.stringify(preparedContext.configuration) === JSON.stringify(job.configuration)
           && JSON.stringify(preparedContext.protection) === JSON.stringify(job.protection)
           ? preparedContext

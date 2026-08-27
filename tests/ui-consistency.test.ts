@@ -241,13 +241,26 @@ test("draft lifecycle UI has no draft-level star state", () => {
   assert.doesNotMatch(listSource, /filter\.starred|status === "starred"/);
 });
 
-test("new Agent send targets choose a Project before an expanded Workspace", () => {
+test("new Agent send targets choose a Project and can provision a retained Workspace", () => {
   const sendSource = readFileSync(join(clientRoot, "studio", "send-panel.client.tsx"), "utf8");
   const pickerSource = readFileSync(join(clientRoot, "studio", "project-workspace-picker.client.tsx"), "utf8");
+  const sendFunction = componentSource(sendSource, "  async function send()", "  function selectProject");
 
   assert.match(sendSource, /<ProjectWorkspacePicker/);
   assert.doesNotMatch(sendSource, /sourceWorkspaces\.slice/);
+  assert.match(sendFunction, /paseo\.workspaces\.create/);
+  assert.ok(
+    sendFunction.indexOf("setRetainedWorkspace") < sendFunction.indexOf("await workspace.refresh()"),
+    "an acknowledged Workspace must be retained before refresh or dispatch can fail",
+  );
+  assert.ok(
+    sendFunction.indexOf('setPlacementKind("existing_workspace")') < sendFunction.indexOf("await workspace.refresh()"),
+    "retry must reuse the acknowledged Workspace instead of creating another one",
+  );
+  assert.match(sendFunction, /workspaceId: targetWorkspaceId/);
   assert.match(pickerSource, /groups\.map/);
+  assert.match(pickerSource, /onNewWorkspaceSelect/);
+  assert.match(pickerSource, /send\.project\.newWorkspace/);
   assert.match(pickerSource, /group\.workspaces\.map/);
   assert.match(pickerSource, /accessibilityState=\{\{ expanded, selected: selectedProject \}\}/);
   assert.match(pickerSource, /color: expanded \? theme\.colors\.foreground : theme\.colors\.foregroundMuted/);

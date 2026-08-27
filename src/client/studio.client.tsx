@@ -545,9 +545,9 @@ function DraftEditor({
       return;
     }
     const project = projects.find((item) => item.projectId === projectId);
-    if (projectId && (!project || !project.workspaceLocatorId)) return;
-    const target: DraftScopeTarget = project?.workspaceLocatorId
-      ? { kind: "project", projectId: project.projectId, workspaceId: project.workspaceLocatorId }
+    if (projectId && !project) return;
+    const target: DraftScopeTarget = project
+      ? { kind: "project", projectId: project.projectId }
       : { kind: "inbox" };
     const selection = scopeChangeQueue.current?.select(
       canonicalProjectId,
@@ -725,7 +725,7 @@ function DraftEditor({
     ? projects.find((project) => project.projectId === detail.summary.scope.projectId) ?? {
         projectId: detail.summary.scope.projectId,
         projectDisplayName: detail.summary.scope.projectName ?? detail.summary.scope.projectId,
-        workspaceLocatorId: "",
+        projectRootPath: null,
       }
     : null;
   const scopeProjects = currentScopeProject
@@ -879,8 +879,7 @@ function DraftEditor({
             ...scopeProjects.map((project) => ({
               id: project.projectId,
               label: project.projectDisplayName,
-              disabled: (!project.workspaceLocatorId && project.projectId !== detail.summary.scope.projectId)
-                || archived
+              disabled: archived
                 || saveState !== "saved"
                 || checkpointBusy
                  || scopeBusy
@@ -1619,7 +1618,6 @@ export function StudioView({
       ? {
           kind: "project" as const,
           projectId: projectContext.projectId,
-          workspaceId: projectContext.workspaceLocatorId,
         }
       : { kind: "inbox" as const };
     setCreating(true);

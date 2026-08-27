@@ -16,7 +16,7 @@ The product name is **Prompt Studio for Paseo**. The repository and npm package 
 - Dedicated Prompt Studio and Worklog surfaces, sidebar entries, and Command Center actions.
 - Workspace- and agent-context Prompt Scratchpad panels, plus a compact Workspace Scratchpad in Explorer.
 - A single plaintext vault whose `drafts/` directory contains every canonical draft lineage.
-- Inbox or Project scope without tying a draft to a specific Workspace or Agent.
+- Inbox or Project scope without tying a draft to a specific Workspace or Agent, including Projects that do not yet have a Workspace.
 - Debounced autosave with optimistic version and content-hash checks, external-edit detection, and recoverable checkpoints.
 - A server-enforced `draft ⇄ ready` lifecycle. Marking a draft ready creates a checkpoint; changing its title or Markdown returns it to draft.
 - Sidebar multi-selection with select-all-matching, batch lifecycle actions (Draft, Ready, Archive, Restore), and bulk tag assignment/removal.
@@ -108,7 +108,7 @@ For a saved Draft assigned to a Project, use **Prompt optimization** to configur
 
 Generation runs are durable and single-flight per Draft. While one is unresolved, Prompt Studio locks mutations and sending for that Draft but lets you browse other Drafts. A successful reply becomes the latest body, creates an undo checkpoint, marks the Draft as generated, and returns `ready` to `draft`. If the Draft changed while the Agent was running, the reply is retained as a conflict candidate and is never applied without an explicit latest-version check.
 
-When the content is ready to send, change the draft state to **Ready**. Prompt Studio creates a checkpoint before the transition. Select an existing Agent or configure a new Agent, then freeze and send the current version. The frozen snapshot remains unchanged even if the draft is edited later.
+When the content is ready to send, change the draft state to **Ready**. Prompt Studio creates a checkpoint before the transition. Select an existing Agent or configure a new Agent, then freeze and send the current version. For a new Agent, choose an existing Workspace or create a new Workspace directly under any available Project. An acknowledged new Workspace is retained across refresh or dispatch failure so retry cannot create another one implicitly. The frozen snapshot remains unchanged even if the draft is edited later.
 
 Open **Worklog** for a read-only activity timeline. From a Workspace or Agent context, use **Open Prompt Scratchpad** to work with the drafts scoped to that Project. In Paseo 0.6 and later, the Workspace Scratchpad opens in Explorer beside **Files** and **Changes**; the full Workspace and Agent panels remain available as workspace tabs.
 
@@ -121,7 +121,7 @@ By default, Prompt Studio stores its plaintext vault at:
 
 Set `PASEO_PROMPT_STUDIO_HOME` before starting the daemon to choose another location.
 
-Markdown and JSON files are canonical. `catalog.json` is a derived index and may be deleted and rebuilt. External Project directories are logical links only; losing a link never deletes its drafts. Back up the entire vault before moving it or changing its storage location.
+Markdown and JSON files are canonical. `catalog.json` is a derived index and may be deleted and rebuilt. External Project directories are Project-level logical links and do not persist a Workspace locator; losing a link never deletes its drafts. Back up the entire vault before moving it or changing its storage location.
 
 Paseo 0.5.1 does not expose a provider-independent read allowlist or an OS/container security boundary for Agents. Prompt Studio validates and rejects managed-vault paths, forces the strongest available provider-native read-only policy, and repeats no-file/project-only rules in the Agent prompt. The UI identifies behavioral-only protection; it must not be interpreted as hard filesystem isolation.
 

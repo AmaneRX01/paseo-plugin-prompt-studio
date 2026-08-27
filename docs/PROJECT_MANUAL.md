@@ -1,10 +1,10 @@
 # Prompt Studio Project Manual
 
-> Document version: 1.1
+> Document version: 1.2
 >
 > Project: Prompt Studio for Paseo
 >
-> Updated: August 26, 2026
+> Updated: August 27, 2026
 
 ## 1. Overview
 
@@ -119,7 +119,7 @@ The interface supports English and Simplified Chinese. It adapts to wide and com
 | Term | Meaning |
 | --- | --- |
 | Inbox | Global logical scope not linked to an external Project |
-| Project link | Machine-local relationship between an external project directory and a Paseo Project/Workspace in `project-map.json` |
+| Project link | Machine-local relationship between an external project directory and a Paseo Project in `project-map.json`; it does not require a Workspace |
 | Scope | A draft's logical ownership: the global Inbox or one Project; it is not a Workspace or agent dispatch target |
 | Draft | The current editable, autosaved prompt |
 | Checkpoint | A staged Markdown copy used for recovery |
@@ -225,7 +225,7 @@ A saved draft can move between:
 - the global Inbox; and
 - any available Project.
 
-Workspace and agent IDs are not part of scope. They remain freely selectable dispatch targets and do not change draft ownership.
+Projects with no Workspace are still available scope choices. Workspace and agent IDs are not part of scope. They remain execution/dispatch targets and do not change draft ownership.
 
 After a scope selection, the client waits one second for it to stabilize. Further selections replace the pending destination. Returning to the canonical scope during this window cancels the complete interaction: no server request, checkpoint, event, or version change occurs.
 
@@ -242,11 +242,12 @@ A stable, real scope change is committed once. The server first creates a checkp
 ### 6.4 Create an agent and send
 
 1. Select **New agent**.
-2. Choose a source Workspace, provider, and model.
-3. Select provider-supported mode and reasoning effort, and optionally enter an agent title.
-4. Select **Freeze snapshot and send**.
+2. Choose a Project, then either one of its existing Workspaces or **Create a new Workspace**.
+3. Choose a provider and model.
+4. Select provider-supported mode and reasoning effort, and optionally enter an agent title.
+5. Select **Freeze snapshot and send**.
 
-The new agent runs in the selected source Workspace. Sending does not change the draft's scope. Prompt Studio refuses to create an agent inside its own vault Workspace to avoid recursive management.
+If **Create a new Workspace** is selected, Prompt Studio asks Paseo to create it under the chosen Project and then creates the Agent inside it. As soon as Paseo acknowledges the Workspace, Prompt Studio retains that exact ID: a refresh or dispatch failure reuses it instead of creating another Workspace. The new Agent runs in the selected or newly created Workspace. Sending does not change the Draft's scope. Prompt Studio refuses to create an Agent inside its own vault Workspace to avoid recursive management.
 
 ### 6.5 Handle failed or uncertain sends
 
@@ -329,7 +330,7 @@ prompt-studio/
 ├─ companion.json                    # portable identity of the single vault
 ├─ catalog.json                       # disposable derived index
 ├─ .transactions/                     # recovery journals and delete quarantine
-├─ local/project-map.json             # local directory and Project/Workspace links
+├─ local/project-map.json             # external directory/Project links and vault registration
 ├─ events/YYYY/MM/*.json
 ├─ drafts/dr_<id>/
 │  ├─ draft.md
@@ -344,7 +345,7 @@ prompt-studio/
 
 The complete root is registered as one dedicated Prompt Studio Paseo Project. On the first catalog read, the plugin attempts to register this path through the host SDK. A failure remains visibly pending with a retry action.
 
-`companion.json` holds the portable vault identity. `local/project-map.json` holds machine-local vault registration state and mappings among external directories, Project IDs, and Workspace locators. These local links are not portable cross-daemon identities.
+`companion.json` holds the portable vault identity. `local/project-map.json` holds the machine-local Project/Workspace registration of the vault itself and mappings among external directories and Project IDs. External Project links do not persist a Workspace locator. These local links are not portable cross-daemon identities.
 
 Every draft resides in the same `drafts/` directory. Changing scope only updates one metadata file and never moves the lineage.
 
@@ -449,8 +450,8 @@ Add focused recovery and regression tests for changes to:
 4. Autosave, external-edit conflict handling, and canonical reload behave as expected.
 5. `draft ⇄ ready` works in both directions. Marking ready creates a checkpoint, a real edit returns the draft to `draft`, and both active states archive and restore correctly.
 6. Drafts have no starred state, filter, or pinning. Only ready drafts can send; checkpoint stars remain independent.
-7. A scope change preserves the Draft ID and `drafts/dr_<id>` path and leaves exactly one canonical lineage.
-8. Existing-agent sends, new-agent sends, failed retries, and timeline reconciliation all work.
+7. A Project with no Workspaces can own a Draft scope. The change preserves the Draft ID and `drafts/dr_<id>` path, stores no Workspace locator in the Project link, and leaves exactly one canonical lineage.
+8. Existing-agent sends, existing-Workspace new-agent sends, and **Create a new Workspace** sends all work. After an acknowledged Workspace creation, force refresh or dispatch failure and confirm retry reuses the same Workspace ID. Failed dispatch retries and timeline reconciliation must preserve their existing snapshot/message-ID rules.
 9. Configure both Prompt Agent tasks. Verify related-context counts and truncation, format-only isolation, Project-read confirmation, Generated provenance, ready-to-draft downgrade, and the undo checkpoint.
 10. Edit the canonical Markdown during generation. Confirm that the reply becomes a conflict candidate, stale apply is rejected, and explicit apply/discard resolves the Draft lock without creating a second Agent.
 11. Permanent deletion requires an archived draft and the complete Draft ID. Pending dispatch or generation lineage blocks deletion, and an interrupted deletion resumes from its journal.
@@ -516,7 +517,7 @@ Return to the Draft to inspect the durable job. **Sync** reconciles the recorded
 - Worklog shows only Prompt Studio-related activity. It does not copy complete agent conversations or accept manual notes.
 - Permanent deletion removes only the local Prompt Studio canonical lineage. It cannot delete messages already sent to a Paseo agent session.
 - An unavailable external Project directory never deletes its `project-map.json` entry or drafts. Restore the directory and refresh to make the link usable again.
-- `projectId`, `workspaceId`, and absolute paths are machine-local placement data, not portable identity.
+- `projectId` and absolute Project roots are machine-local Project links; `workspaceId` is machine-local execution placement. None is portable vault identity.
 - Prompt Agent read restrictions are defense in depth, not an OS/container boundary. Providers marked behavioral-only may technically read other daemon-user-readable paths despite the task prohibition.
 - The Store remains the project's largest aggregation point. Prefer extracting a focused repository before adding more persistence behavior.
 

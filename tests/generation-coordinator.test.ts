@@ -40,8 +40,6 @@ test.before(async () => {
 const DRAFT_ID = `dr_${"a".repeat(16)}`;
 const GENERATION_ID = `gn_${"b".repeat(24)}`;
 const PROJECT_ID = "prj_external";
-const WORKSPACE_ID = "wks_source";
-const REPLACEMENT_WORKSPACE_ID = "wks_source_replacement";
 const ROOT_WORKSPACE_ID = "wks_root";
 
 function digest(value: string): string {
@@ -87,7 +85,7 @@ function makeJob(input: GenerationStartInput, context: GenerationPreparationCont
   const now = "2026-08-26T00:00:00.000Z";
   const request = "frozen generation request";
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: GENERATION_ID,
     draftId: input.draftId,
     task: input.task,
@@ -122,7 +120,7 @@ function makeJob(input: GenerationStartInput, context: GenerationPreparationCont
 
 class FakeStore implements GenerationRuntimeStore {
   job: GenerationJob | null = null;
-  refreshedSource: { projectId: string; workspaceId: string; rootPath: string; name: string } | null = null;
+  refreshedSource: { projectId: string; rootPath: string; name: string } | null = null;
   hideUnresolvedOnce = false;
   configuration: GenerationProviderConfig = {
     provider: "codex",
@@ -142,12 +140,11 @@ class FakeStore implements GenerationRuntimeStore {
   }
 
   async getGenerationProject(_draftId: string) {
-    return { projectId: PROJECT_ID, projectName: "Example", workspaceId: WORKSPACE_ID };
+    return { projectId: PROJECT_ID, projectName: "Example" };
   }
 
-  async refreshGenerationProjectLocator(source: {
+  async refreshGenerationProjectLink(source: {
     projectId: string;
-    workspaceId: string;
     rootPath: string;
     name: string;
   }): Promise<void> {
@@ -341,8 +338,7 @@ class FakePaseo implements GenerationPaseo {
   readonly agentMap = new Map<string, FakeAgent>();
   createCount = 0;
   agentListCount = 0;
-  sourceWorkspaceAvailable = true;
-  replacementWorkspaceAvailable = false;
+  projectAvailable = true;
   createBehavior: "success" | "throw" | "accept-then-throw" = "success";
   createdOptions: Parameters<GenerationWorkspaceHandle["agents"]["create"]>[0] | null = null;
 
@@ -352,17 +348,13 @@ class FakePaseo implements GenerationPaseo {
     return {
       id,
       projectId: PROJECT_ID,
-      refresh: async () => (
-        id === WORKSPACE_ID && !this.sourceWorkspaceAvailable
-          ? null
-          : {
-              id,
-              projectId: PROJECT_ID,
-              projectDisplayName: "Example",
-              projectRootPath: this.projectRoot,
-              workspaceDirectory: id === ROOT_WORKSPACE_ID ? this.projectRoot : undefined,
-            }
-      ),
+      refresh: async () => ({
+        id,
+        projectId: PROJECT_ID,
+        projectDisplayName: "Example",
+        projectRootPath: this.projectRoot,
+        workspaceDirectory: id === ROOT_WORKSPACE_ID ? this.projectRoot : undefined,
+      }),
       agents: {
         create: async (options) => {
           this.calls.push("create");
@@ -382,8 +374,9 @@ class FakePaseo implements GenerationPaseo {
     ref: (workspaceId: string) => this.workspace(workspaceId),
     open: async (_root: string) => this.workspace(ROOT_WORKSPACE_ID),
     list: async () => ({
-      entries: this.replacementWorkspaceAvailable
-        ? [{ id: REPLACEMENT_WORKSPACE_ID, projectId: PROJECT_ID }]
+      entries: [],
+      emptyProjects: this.projectAvailable
+        ? [{ projectId: PROJECT_ID, projectDisplayName: "Example", projectRootPath: this.projectRoot }]
         : [],
       pageInfo: { nextCursor: null, hasMore: false },
     }),
@@ -456,7 +449,7 @@ function seedPreparedJob(
   }).protection;
   const job = makeJob(input, {
     configuration: store.configuration,
-    project: { projectId: PROJECT_ID, projectName: "Example", workspaceId: WORKSPACE_ID },
+    project: { projectId: PROJECT_ID, projectName: "Example" },
     projectRoot: paseo.projectRoot,
     contextWindowMaxTokens: 128_000,
     protection,
@@ -547,7 +540,7 @@ test("start persists and claims a job before one Agent create with stable safety
   const result = await coordinator.start(startInput({ allowProjectRead: true }));
 
   assert.equal(result.job.status, "running");
-  assert.equal(result.job.project.workspaceId, WORKSPACE_ID);
+  assert.equal(result.job.project.projectId, PROJECT_ID);
   assert.equal(paseo.createCount, 1);
   assert.deepEqual(store.calls.slice(0, 4), ["prepare", "claim", "create", "running"]);
   assert.equal(paseo.createdOptions?.requestId, result.job.requestId);
@@ -562,16 +555,12 @@ test("start persists and claims a job before one Agent create with stable safety
   assert.equal(paseo.createCount, 1, "a running generation must never create a second Agent");
 });
 
-test("generation replaces an archived Project locator with a current Workspace before launch", async (t) => {
+test("generation resolves a Project with no existing Workspace before launch", async (t) => {
   const { coordinator, store, paseo } = await fixture(t);
-  paseo.sourceWorkspaceAvailable = false;
-  paseo.replacementWorkspaceAvailable = true;
 
   const result = await coordinator.start(startInput());
 
   assert.equal(result.job.status, "running");
-  assert.equal(result.job.project.workspaceId, REPLACEMENT_WORKSPACE_ID);
-  assert.equal(store.refreshedSource?.workspaceId, REPLACEMENT_WORKSPACE_ID);
   assert.equal(store.refreshedSource?.projectId, PROJECT_ID);
   assert.equal(store.refreshedSource?.rootPath, paseo.projectRoot);
 });
@@ -673,7 +662,7 @@ test("a broken frozen Project mapping never falls back to a global Agent search"
   assert.equal(started.job.status, "running");
   assert.equal(paseo.agentListCount, 0);
 
-  paseo.sourceWorkspaceAvailable = false;
+  paseo.projectAvailable = false;
   const synced = await coordinator.sync(DRAFT_ID, GENERATION_ID);
 
   assert.equal(synced.job.status, "needs-attention");

@@ -2,26 +2,27 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isPathInsideVault,
+  isSamePath,
   projectChoicesFromWorkspaces,
 } from "../src/client/studio/project-choices.client";
 
 test("Scope collapses Agent-task Workspaces into one choice per Project", () => {
   const choices = projectChoicesFromWorkspaces([
-    { id: "wks_review", projectId: "prj_worklog", projectDisplayName: "worklog_plugin" },
-    { id: "wks_scratchpad", projectId: "prj_worklog", projectDisplayName: "worklog_plugin" },
-    { id: "wks_dialogic", projectId: "prj_game", projectDisplayName: "game" },
+    { id: "wks_review", projectId: "prj_worklog", projectDisplayName: "worklog_plugin", projectRootPath: "D:\\worklog" },
+    { id: "wks_scratchpad", projectId: "prj_worklog", projectDisplayName: "worklog_plugin", projectRootPath: "D:\\worklog" },
+    { id: "wks_dialogic", projectId: "prj_game", projectDisplayName: "game", projectRootPath: "D:\\game" },
   ]);
 
   assert.deepEqual(choices, [
     {
       projectId: "prj_worklog",
       projectDisplayName: "worklog_plugin",
-      workspaceLocatorId: "wks_review",
+      projectRootPath: "D:\\worklog",
     },
     {
       projectId: "prj_game",
       projectDisplayName: "game",
-      workspaceLocatorId: "wks_dialogic",
+      projectRootPath: "D:\\game",
     },
   ]);
   assert.equal(choices.some((choice) => "name" in choice), false);
@@ -50,15 +51,21 @@ test("vault and legacy vault Workspace paths are excluded without matching sibli
   assert.equal(isPathInsideVault("/Users/me/Vault", "/Users/me/vault/legacy"), false);
 });
 
-test("a Project without a Workspace remains visible but has no scope locator", () => {
+test("a Project without a Workspace remains a complete scope choice", () => {
   const choices = projectChoicesFromWorkspaces([], [{
     projectId: "prj_empty",
     projectDisplayName: "Empty Project",
+    projectRootPath: "D:\\empty",
   }]);
 
   assert.deepEqual(choices, [{
     projectId: "prj_empty",
     projectDisplayName: "Empty Project",
-    workspaceLocatorId: null,
+    projectRootPath: "D:\\empty",
   }]);
+});
+
+test("Project root equality normalizes separators and Windows case", () => {
+  assert.equal(isSamePath("D:\\Example\\Project", "d:/example/project/"), true);
+  assert.equal(isSamePath("D:\\Example\\Project", "D:\\Example\\Other"), false);
 });

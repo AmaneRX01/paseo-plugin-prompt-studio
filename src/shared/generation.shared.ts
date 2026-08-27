@@ -123,10 +123,15 @@ export const generationContextSourceSchema = z.object({
   contentHash: sha256Schema,
 }).strict();
 
-export const generationProjectSchema = z.object({
+const generationProjectV1Schema = z.object({
   projectId: z.string().min(1),
   projectName: z.string().min(1),
   workspaceId: z.string().min(1),
+}).strict();
+
+export const generationProjectSchema = z.object({
+  projectId: z.string().min(1),
+  projectName: z.string().min(1),
 }).strict();
 
 export const generationProtectionSchema = z.object({
@@ -157,8 +162,7 @@ export const generationJobStatusSchema = z.enum([
   "abandoned",
 ]);
 
-export const generationJobRecordSchema = z.object({
-  schemaVersion: z.literal(1),
+const generationJobRecordFields = {
   id: generationIdSchema,
   draftId: draftIdSchema,
   task: generationTaskSchema,
@@ -169,7 +173,6 @@ export const generationJobRecordSchema = z.object({
   allowProjectRead: z.boolean(),
   filters: generationContextFiltersSchema.nullable(),
   configuration: generationProviderConfigSchema,
-  project: generationProjectSchema,
   counts: generationContextCountsSchema,
   includedSources: z.array(generationContextSourceSchema),
   protection: generationProtectionSchema,
@@ -187,9 +190,37 @@ export const generationJobRecordSchema = z.object({
   createdAt: isoDateSchema,
   updatedAt: isoDateSchema,
   completedAt: isoDateSchema.nullable(),
+};
+
+const generationJobRecordV1Schema = z.object({
+  schemaVersion: z.literal(1),
+  ...generationJobRecordFields,
+  project: generationProjectV1Schema,
 }).strict();
 
-export const generationJobSchema = generationJobRecordSchema.extend({
+const generationJobRecordV2Schema = z.object({
+  schemaVersion: z.literal(2),
+  ...generationJobRecordFields,
+  project: generationProjectSchema,
+}).strict();
+
+export const generationJobRecordSchema = z.union([
+  generationJobRecordV2Schema,
+  generationJobRecordV1Schema,
+]).transform((record) => (
+  record.schemaVersion === 2
+    ? record
+    : generationJobRecordV2Schema.parse({
+        ...record,
+        schemaVersion: 2,
+        project: {
+          projectId: record.project.projectId,
+          projectName: record.project.projectName,
+        },
+      })
+));
+
+export const generationJobSchema = generationJobRecordV2Schema.extend({
   responseMarkdown: z.string().nullable(),
 }).strict();
 

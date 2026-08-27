@@ -110,7 +110,6 @@ function planManagedAgentsBlock(current: string): ManagedAgentsBlockPlan {
 
 export interface ResolvedSourceProject {
   projectId: string;
-  workspaceId: string;
   rootPath: string;
   name: string;
 }
@@ -138,10 +137,20 @@ function pendingRegistration(error: string | null = null): LocalRegistration {
 function sourceFromResolved(source: ResolvedSourceProject): LocalProjectSource {
   return {
     projectId: source.projectId,
-    workspaceId: source.workspaceId,
     rootPath: path.resolve(source.rootPath),
     name: source.name,
   };
+}
+
+function hasLegacyProjectWorkspaceLocator(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const projects = (value as { projects?: unknown }).projects;
+  if (!Array.isArray(projects)) return false;
+  return projects.some((project) => {
+    if (!project || typeof project !== "object") return false;
+    const source = (project as { source?: unknown }).source;
+    return Boolean(source && typeof source === "object" && "workspaceId" in source);
+  });
 }
 
 export class VaultRepository {
@@ -367,7 +376,7 @@ export class VaultRepository {
         linkError: container.linkError ?? (container.source ? null : "Legacy project link is unavailable"),
       }));
     return projectMapSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: "prompt-studio-project-map",
       pluginProject: {
         rootPath: this.rootPath,
@@ -522,7 +531,7 @@ export class VaultRepository {
 
     if (!(await exists(this.projectMapPath))) {
       const map: ProjectMap = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         kind: "prompt-studio-project-map",
         pluginProject: { rootPath: this.rootPath, registration: pendingRegistration() },
         projects: [],
@@ -531,7 +540,12 @@ export class VaultRepository {
       await writeJson(this.projectMapPath, map, this.rootPath);
     } else {
       try {
-        const current = projectMapSchema.parse(await readJson(this.projectMapPath));
+        const raw = await readJson(this.projectMapPath);
+        const current = projectMapSchema.parse(raw);
+        const needsProjectMapUpgrade = !raw
+          || typeof raw !== "object"
+          || (raw as { schemaVersion?: unknown }).schemaVersion !== 2
+          || hasLegacyProjectWorkspaceLocator(raw);
         if (normalizePath(current.pluginProject.rootPath) !== normalizePath(this.rootPath)) {
           await this.writeProjectMap({
             ...current,
@@ -541,6 +555,8 @@ export class VaultRepository {
             },
             updatedAt: now,
           });
+        } else if (needsProjectMapUpgrade) {
+          await this.writeProjectMap({ ...current, updatedAt: now });
         }
       } catch {
         // Do not overwrite a malformed canonical map. Scans retain readable Drafts

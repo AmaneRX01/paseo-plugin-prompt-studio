@@ -43,9 +43,15 @@ const registeredRegistrationSchema = z.object({
   error: z.null(),
 });
 
-export const localProjectSourceSchema = z.object({
+const legacyLocalProjectSourceSchema = z.object({
   projectId: z.string().min(1),
   workspaceId: z.string().min(1),
+  rootPath: z.string().min(1),
+  name: z.string().min(1),
+});
+
+export const localProjectSourceSchema = z.object({
+  projectId: z.string().min(1),
   rootPath: z.string().min(1),
   name: z.string().min(1),
 });
@@ -72,8 +78,23 @@ export const projectLinkSchema = z.object({
   linkError: z.string().nullable(),
 });
 
-export const projectMapSchema = z.object({
+const projectMapV1Schema = z.object({
   schemaVersion: z.literal(1),
+  kind: z.literal("prompt-studio-project-map"),
+  pluginProject: z.object({
+    rootPath: z.string().min(1),
+    registration: localRegistrationSchema,
+  }),
+  projects: z.array(z.object({
+    manifest: manifestSchema,
+    source: legacyLocalProjectSourceSchema.nullable(),
+    linkError: z.string().nullable(),
+  })),
+  updatedAt: internalIsoDateSchema,
+});
+
+const projectMapV2Schema = z.object({
+  schemaVersion: z.literal(2),
   kind: z.literal("prompt-studio-project-map"),
   pluginProject: z.object({
     rootPath: z.string().min(1),
@@ -82,6 +103,25 @@ export const projectMapSchema = z.object({
   projects: z.array(projectLinkSchema),
   updatedAt: internalIsoDateSchema,
 });
+
+export const projectMapSchema = z.union([projectMapV2Schema, projectMapV1Schema]).transform((map) => (
+  map.schemaVersion === 2
+    ? map
+    : projectMapV2Schema.parse({
+        ...map,
+        schemaVersion: 2,
+        projects: map.projects.map((project) => ({
+          ...project,
+          source: project.source
+            ? {
+                projectId: project.source.projectId,
+                rootPath: project.source.rootPath,
+                name: project.source.name,
+              }
+            : null,
+        })),
+      })
+));
 
 const safeRelativePathSchema = z.string().min(1).refine(
   (value) => !value.includes("..") && !value.startsWith("/") && !/^[a-zA-Z]:/.test(value),

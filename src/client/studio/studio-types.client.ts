@@ -5,7 +5,7 @@ export type StudioTab = "worklog" | "drafts";
 
 export interface StudioProjectContext {
   projectId: string;
-  workspaceLocatorId: string;
+  preferredWorkspaceId: string;
   projectName: string;
 }
 

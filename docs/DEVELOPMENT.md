@@ -51,15 +51,15 @@ npm run smoke:compiler
 
 Automated tests cover these high-risk paths:
 
-- Single-vault creation, Project registration retries, and external directory/Project link mappings.
-- Journaled upgrades from legacy Inbox/companion layouts, interrupted recovery, stabilized Project-scope changes, rapid round-trip no-ops, legacy `scope.workspaceId`/`scope.agentId` compatibility, and a single canonical lineage.
+- Single-vault creation, Project registration retries, Project-only external links, and Project resolution with zero Workspaces.
+- Journaled upgrades from legacy Inbox/companion layouts, interrupted recovery, stabilized Project-scope changes, rapid round-trip no-ops, legacy scope/project-map/generation Workspace-locator compatibility, and a single canonical lineage.
 - Missing external Project directories producing warnings without deleting drafts; permanent deletion remains an explicit plugin action.
 - Catalog caching, explicit rebuilds, corrupt-JSON degradation, and external Markdown edits.
 - The independent tag concurrency domain, case-insensitive normalization, hierarchical counts and filters, global rename/merge, bulk changes, and interrupted transaction recovery.
 - Optimistic concurrency, cross-process file locking, and periodic checkpoints.
 - Checkpoint content reads, hash/lineage validation, pre-restore backups, reversible restores, no-ops, and stale-revision rejection.
 - Snapshot immutability, stable message IDs, failed-send retries, retry rejection while archived, and read-only reconciliation after archive.
-- Existing/new Agent dispatch boundaries and linked session timelines.
+- Existing/new Agent dispatch boundaries, direct Workspace provisioning with retained-ID retry, and linked session timelines.
 - Prompt generation context filtering/budgeting, durable single-flight launch reconciliation, provider policies, exact response capture, conflict candidates, and generated provenance.
 - The absence of Worklog write paths, no writable Worklog directory in the vault, and safe read-only compatibility with legacy Worklog Markdown.
 - Junction and symlink boundary protection.
@@ -80,8 +80,8 @@ Automated tests cover these high-risk paths:
 1. Confirm that `prompt-studio` is `running` and its logs contain no unexpected stderr.
 2. Open Prompt Studio and Worklog from both the sidebar and Command Center. Prompt Studio must expose draft actions; Worklog must expose only search, refresh, and the activity timeline.
 3. From different Workspace/Agent contexts in one Project, confirm that the Command Center shows exactly one **Open Prompt Scratchpad** entry. Each context must open the same Project draft set, and draft scope must not include a Workspace or Agent.
-4. Create an Inbox draft, let it save, then assign a Project scope. The Draft ID and `drafts/dr_<id>` path must remain unchanged, with no scope-move journal.
-5. Verify `draft ⇄ ready`, the ready checkpoint, and automatic return to draft after content edits. Only ready drafts may be sent to an existing or new Agent. Inspect the snapshot, dispatch, `clientMessageId`, and linked session.
+4. Create an Inbox draft, let it save, then assign a Project with no Workspaces as its scope. The Draft ID and `drafts/dr_<id>` path must remain unchanged, with no scope-move journal or Workspace locator in the Project link.
+5. Verify `draft ⇄ ready`, the ready checkpoint, and automatic return to draft after content edits. Only ready drafts may be sent to an existing or new Agent. For a zero-Workspace Project, select **Create a new Workspace**, force the following dispatch to fail, and confirm retry reuses the same Workspace ID. Inspect the snapshot, dispatch, `clientMessageId`, and linked session.
 6. Perform `A → B → A` within one second. The UI must cancel the pending scope change without changing the version, checkpoints, or events. Remaining on B past the stabilization window must submit once, and Worklog must show the source and target scope without expanding checkpoint activity.
 7. Archive and restore from both draft and ready, confirming restoration to the prior active state. Permanent deletion must require the full Draft ID, reject pending dispatches, and remove the draft from the list, Worklog, canonical lineage, container events, and catalog.
 8. Delete `catalog.json`, select **Refresh files**, and confirm a complete plaintext rebuild. Temporarily move a linked Project directory and confirm that only a link warning appears and no drafts are deleted. Ordinary window focus must not trigger continuous full scans.

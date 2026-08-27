@@ -103,11 +103,10 @@ export class PromptStudioGenerationStore implements GenerationHandlerStore {
     return {
       projectId,
       projectName: draft.summary.scope.projectName ?? linked.name,
-      workspaceId: linked.workspaceId,
     };
   }
 
-  async refreshGenerationProjectLocator(source: ResolvedSourceProject): Promise<void> {
+  async refreshGenerationProjectLink(source: ResolvedSourceProject): Promise<void> {
     await this.store.ensureContainer(source);
   }
 
@@ -205,7 +204,7 @@ export class PromptStudioGenerationStore implements GenerationHandlerStore {
     const at = this.now().toISOString();
     const stablePrefix = `prompt-studio:generation:${id}`;
     const record: GenerationJobRecord = generationJobRecordSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: 2,
       id,
       draftId: input.draftId,
       task: input.task,

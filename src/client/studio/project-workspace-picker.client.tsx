@@ -8,16 +8,20 @@ import type { ProjectWorkspaceGroup } from "./workspace-groups.client";
 export function ProjectWorkspacePicker({
   expandedProjectId,
   groups,
+  onNewWorkspaceSelect,
   onProjectPress,
   onWorkspaceSelect,
+  selectedNewWorkspace,
   selectedProjectId,
   selectedWorkspaceId,
   theme,
 }: {
   expandedProjectId: string | null;
   groups: readonly ProjectWorkspaceGroup[];
+  onNewWorkspaceSelect: (projectId: string) => void;
   onProjectPress: (projectId: string) => void;
   onWorkspaceSelect: (workspaceId: string) => void;
+  selectedNewWorkspace: boolean;
   selectedProjectId: string | null;
   selectedWorkspaceId: string | null;
   theme: PluginTheme;
@@ -85,6 +89,52 @@ export function ProjectWorkspacePicker({
 
             {expanded ? (
               <View style={{ borderLeftColor: palette.borderStrong, borderLeftWidth: 2, marginLeft: 16 }}>
+                <Pressable
+                  accessibilityLabel={t("send.project.newWorkspace")}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: selectedProject && selectedNewWorkspace }}
+                  onPress={() => onNewWorkspaceSelect(group.projectId)}
+                  style={({ pressed }) => ({
+                    alignItems: "center",
+                    backgroundColor: selectedProject && selectedNewWorkspace
+                      ? palette.controlStrong
+                      : pressed ? palette.control : "transparent",
+                    borderTopColor: palette.border,
+                    borderTopWidth: 1,
+                    flexDirection: "row",
+                    gap: 9,
+                    minHeight: uiMetrics.compactControlHeight,
+                    paddingHorizontal: 12,
+                    paddingVertical: 7,
+                  })}
+                >
+                  <View
+                    style={{
+                      backgroundColor: selectedProject && selectedNewWorkspace
+                        ? theme.colors.accent
+                        : palette.controlStrong,
+                      borderColor: selectedProject && selectedNewWorkspace
+                        ? theme.colors.accent
+                        : palette.borderStrong,
+                      borderRadius: uiMetrics.pillRadius,
+                      borderWidth: 1,
+                      height: uiMetrics.indicatorSize,
+                      width: uiMetrics.indicatorSize,
+                    }}
+                  />
+                  <Text
+                    style={{
+                      color: selectedProject && selectedNewWorkspace
+                        ? theme.colors.foreground
+                        : theme.colors.foregroundMuted,
+                      flex: 1,
+                      fontSize: font.caption,
+                      fontWeight: selectedProject && selectedNewWorkspace ? "500" : "400",
+                    }}
+                  >
+                    {t("send.project.newWorkspace")}
+                  </Text>
+                </Pressable>
                 {group.workspaces.map((workspace) => {
                   const selected = workspace.id === selectedWorkspaceId;
                   return (

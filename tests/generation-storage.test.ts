@@ -51,7 +51,7 @@ function record(
   overrides: Partial<GenerationJobRecord> = {},
 ): GenerationJobRecord {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: firstGenerationId,
     draftId,
     task: "related",
@@ -69,7 +69,7 @@ function record(
       includeInbox: false,
     },
     configuration: { provider: "codex", model: "gpt-test", thinkingOptionId: null },
-    project: { projectId: "project-1", projectName: "Project One", workspaceId: "workspace-1" },
+    project: { projectId: "project-1", projectName: "Project One" },
     counts: {
       eligibleOtherPromptCount: 0,
       includedOtherPromptCount: 0,
@@ -130,6 +130,38 @@ test("generation repository atomically stores immutable requests and hydrates ca
   const discarded = await repository.discard(draftId, firstGenerationId);
   assert.equal(discarded.status, "discarded");
   assert.ok(discarded.completedAt);
+});
+
+test("legacy generation jobs drop their Workspace locator and upgrade on the next transition", async (t) => {
+  const root = await createVault(t);
+  const request = "legacy frozen generation request";
+  const legacyRecord = {
+    ...record(request),
+    schemaVersion: 1,
+    project: {
+      projectId: "project-1",
+      projectName: "Project One",
+      workspaceId: "wks_legacy_generation",
+    },
+  };
+  const generationRoot = path.join(root, "drafts", draftId, "generations", firstGenerationId);
+  await mkdir(generationRoot, { recursive: true });
+  await writeFile(path.join(generationRoot, "request.md"), request, "utf8");
+  await writeFile(path.join(generationRoot, "meta.json"), `${JSON.stringify(legacyRecord, null, 2)}\n`, "utf8");
+
+  const repository = new GenerationRepository(root);
+  const hydrated = await repository.get(draftId, firstGenerationId);
+  assert.equal(hydrated.schemaVersion, 2);
+  assert.deepEqual(hydrated.project, { projectId: "project-1", projectName: "Project One" });
+  assert.equal("workspaceId" in hydrated.project, false);
+
+  await repository.claimLaunch(draftId, firstGenerationId);
+  const upgraded = JSON.parse(await readFile(path.join(generationRoot, "meta.json"), "utf8")) as {
+    schemaVersion: number;
+    project: Record<string, unknown>;
+  };
+  assert.equal(upgraded.schemaVersion, 2);
+  assert.equal("workspaceId" in upgraded.project, false);
 });
 
 test("three repositories clear one dead participant without double-claiming Agent launch", async (t) => {

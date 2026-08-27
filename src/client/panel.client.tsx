@@ -44,7 +44,7 @@ function WorkspaceScratchpad({
       compact={compact}
       projectContext={{
         projectId: workspace.projectId,
-        workspaceLocatorId: workspaceId,
+        preferredWorkspaceId: workspaceId,
         projectName: workspace.projectName,
       }}
       hostLabel={host.label}
@@ -81,7 +81,7 @@ export function PromptAgentPanel({ theme, host, layout, workspaceId, agentId }: 
       compact={layout.compact}
       projectContext={{
         projectId: workspace.projectId,
-        workspaceLocatorId: workspaceId,
+        preferredWorkspaceId: workspaceId,
         projectName: workspace.projectName,
       }}
       hostLabel={`${host.label} · ${agent.title ?? agent.id}`}

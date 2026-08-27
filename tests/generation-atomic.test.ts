@@ -88,7 +88,7 @@ function generationRecord(
 ): GenerationJobRecord {
   const at = "2026-08-26T01:00:00.000Z";
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: generationId as GenerationJobRecord["id"],
     draftId: draft.summary.id,
     task: "related",
@@ -109,7 +109,6 @@ function generationRecord(
     project: {
       projectId: projectScope.projectId!,
       projectName: projectScope.projectName!,
-      workspaceId: "wks_generation_atomic",
     },
     counts: { ...zeroCounts },
     includedSources: [],
@@ -511,7 +510,6 @@ test("an unresolved generation blocks every Draft mutation and both new and retr
   });
   const anotherSource = {
     projectId: "prj_generation_other",
-    workspaceId: "wks_generation_other",
     rootPath: path.resolve("D:\\generation-other"),
     name: "Generation Other",
   };

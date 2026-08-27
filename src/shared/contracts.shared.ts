@@ -38,15 +38,14 @@ export const draftScopeSchema = z.object({
   projectName: z.string().min(1).nullable(),
 });
 
-// Workspace IDs are transient locators used to resolve a Paseo Project. They are
-// deliberately absent from the canonical DraftScope persisted in meta/snapshots.
+// Draft ownership is Project-based. Workspace IDs are execution placements and
+// must never be required to select or persist a Draft scope.
 export const draftScopeTargetSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("inbox") }),
+  z.object({ kind: z.literal("inbox") }).strict(),
   z.object({
     kind: z.literal("project"),
     projectId: z.string().min(1),
-    workspaceId: z.string().min(1),
-  }),
+  }).strict(),
 ]);
 
 export const containerSummarySchema = z.object({
@@ -281,16 +280,15 @@ export const catalogScanRpc = defineRpc({
 export const containerEnsureRpc = defineRpc({
   name: "prompt-studio.container-ensure",
   input: z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("inbox") }),
+    z.object({ kind: z.literal("inbox") }).strict(),
     z.object({
       kind: z.literal("project"),
       projectId: z.string().min(1),
-      workspaceId: z.string().min(1),
-    }),
+    }).strict(),
     z.object({
       kind: z.literal("container"),
       containerId: containerIdSchema,
-    }),
+    }).strict(),
   ]),
   output: z.object({
     created: z.boolean(),
@@ -305,7 +303,7 @@ export const draftCreateRpc = defineRpc({
     target: draftScopeTargetSchema,
     title: z.string().max(160).default("Untitled"),
     markdown: z.string().max(MAX_DRAFT_MARKDOWN_LENGTH).default(""),
-  }),
+  }).strict(),
   output: z.object({ draft: draftDetailSchema, registrationWarning: z.string().nullable() }),
 });
 
@@ -374,7 +372,7 @@ export const tagBatchRpc = defineRpc({
 
 export const draftScopeRpc = defineRpc({
   name: "prompt-studio.draft-scope",
-  input: z.object({ draftId: draftIdSchema, target: draftScopeTargetSchema }),
+  input: z.object({ draftId: draftIdSchema, target: draftScopeTargetSchema }).strict(),
   output: z.object({ draft: draftDetailSchema, registrationWarning: z.string().nullable() }),
 });
 

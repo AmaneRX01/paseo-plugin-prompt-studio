@@ -3,17 +3,20 @@ export interface WorkspacePickerChoice {
   name: string;
   projectId: string;
   projectDisplayName: string;
+  projectRootPath: string;
 }
 
 export interface ProjectWorkspaceGroup {
   projectId: string;
   projectDisplayName: string;
+  projectRootPath: string | null;
   workspaces: WorkspacePickerChoice[];
 }
 
 export interface WorkspaceDirectoryProjectChoice {
   projectId: string;
   projectDisplayName: string;
+  projectRootPath: string | null;
 }
 
 /**
@@ -36,6 +39,7 @@ export function groupWorkspacesByProject(
     groups.set(workspace.projectId, {
       projectId: workspace.projectId,
       projectDisplayName: workspace.projectDisplayName,
+      projectRootPath: workspace.projectRootPath,
       workspaces: [workspace],
     });
   }
@@ -44,6 +48,7 @@ export function groupWorkspacesByProject(
     groups.set(project.projectId, {
       projectId: project.projectId,
       projectDisplayName: project.projectDisplayName,
+      projectRootPath: project.projectRootPath,
       workspaces: [],
     });
   }

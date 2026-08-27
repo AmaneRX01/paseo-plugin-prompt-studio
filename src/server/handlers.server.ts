@@ -115,6 +115,7 @@ export interface ProjectLinkPaseo {
   workspaces: {
     list(options: { page: { limit: number; cursor?: string } }): Promise<{
       entries: Array<{ projectId: string; projectRootPath: string }>;
+      emptyProjects?: Array<{ projectId: string; projectRootPath: string }>;
       pageInfo: { nextCursor: string | null; hasMore: boolean };
     }>;
   };
@@ -142,6 +143,11 @@ export async function projectLinkWarnings(
         const roots = rootsByProject.get(workspace.projectId) ?? new Set<string>();
         roots.add(normalizePath(workspace.projectRootPath));
         rootsByProject.set(workspace.projectId, roots);
+      }
+      for (const project of page.emptyProjects ?? []) {
+        const roots = rootsByProject.get(project.projectId) ?? new Set<string>();
+        roots.add(normalizePath(project.projectRootPath));
+        rootsByProject.set(project.projectId, roots);
       }
       if (!page.pageInfo.hasMore || !page.pageInfo.nextCursor) {
         complete = true;
@@ -177,7 +183,7 @@ async function ensureForTarget(
       scope: { projectId: null, projectName: null } satisfies DraftScope,
     };
   }
-  const ensured = await ensureAndRegisterProjectContainer(store, paseo, target.projectId, target.workspaceId);
+  const ensured = await ensureAndRegisterProjectContainer(store, paseo, target.projectId);
   if (ensured.container.containerType === "inbox") {
     return {
       ...ensured,
@@ -204,8 +210,8 @@ async function retryContainerRegistration(
 ) {
   if (containerId === "ct_inbox") return ensureAndRegisterInbox(store, paseo);
   const source = await store.getContainerSource(containerId);
-  if (!source) throw new Error(`Project locator is unavailable for container ${containerId}`);
-  return ensureAndRegisterProjectContainer(store, paseo, source.projectId, source.workspaceId);
+  if (!source) throw new Error(`Project link is unavailable for container ${containerId}`);
+  return ensureAndRegisterProjectContainer(store, paseo, source.projectId);
 }
 
 async function agentSnapshot(handle: DispatchAgentHandle): Promise<DispatchAgentSnapshot> {
@@ -398,7 +404,7 @@ export function createHandlers(store = new PromptStudioStore()) {
     ) {
       if (input.kind === "inbox") return ensureAndRegisterInbox(store, paseo);
       if (input.kind === "project") {
-        return ensureAndRegisterProjectContainer(store, paseo, input.projectId, input.workspaceId);
+        return ensureAndRegisterProjectContainer(store, paseo, input.projectId);
       }
       return retryContainerRegistration(store, paseo, input.containerId);
     },

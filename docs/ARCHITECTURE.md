@@ -23,7 +23,7 @@ Client modules must not import `*.server.ts`; server modules must not import `*.
 4. The Store updates canonical Markdown/JSON inside logical and cross-process file locks.
 5. The response is validated again by the contract schema. Body autosave and independent tag mutations update the active Draft and Query cache separately; structural operations keep the derived catalog synchronized.
 
-Normal Paseo operations use the host SDK. Only plugin-specific filesystem behavior uses RPC. The client never creates a second Paseo connection. Prompt generation is deliberately two-phase: short RPCs prepare/reconcile durable jobs, while the client waits on the host SDK's Agent handle outside the plugin RPC timeout and then calls a short `sync` RPC.
+Normal Paseo operations use the host SDK. Only plugin-specific filesystem behavior uses RPC. The client never creates a second Paseo connection. This includes the new-Agent placement flow: the client may create a Workspace with the host SDK, then submits only its logical Workspace ID to the plugin dispatch RPC. Prompt generation is deliberately two-phase: short RPCs prepare/reconcile durable jobs, while the client waits on the host SDK's Agent handle outside the plugin RPC timeout and then calls a short `sync` RPC.
 
 ## Plaintext vault layout
 
@@ -36,7 +36,7 @@ prompt-studio/
 ├─ companion.json                      # Portable identity of the single Prompt Studio vault
 ├─ catalog.json                         # Disposable derived index
 ├─ .transactions/                       # Layout/delete/generation-apply journals and deletion quarantine
-├─ local/project-map.json               # External directory ⇄ Project/Workspace links and vault registration
+├─ local/project-map.json               # External directory ⇄ Project links and vault Project/Workspace registration
 ├─ local/generation-settings.json        # Host-local provider/model/thinking choices
 ├─ events/YYYY/MM/*.json
 ├─ drafts/dr_<id>/
@@ -54,11 +54,11 @@ prompt-studio/
 └─ legacy/containers/<container-id>/    # Legacy manifests, events, and Worklog evidence
 ```
 
-The root is the only path registered as a Paseo Project. `companion.json` stores portable vault identity. `local/project-map.json` is the only machine-local mapping file; it stores one-time Project/Workspace registration state plus mappings between external Project roots, Project IDs, Workspace locators, and logical container IDs. External Projects are not plugin-owned storage boundaries. If a directory disappears, a Paseo Project is removed, or link data becomes stale, scans emit a warning but preserve the mapping and every Draft. Host-side Project relationships are checked read-only through the Workspace list in the Paseo SDK, never through an RPC that accepts client-supplied paths.
+The root is the only path registered as a Paseo Project. `companion.json` stores portable vault identity. `local/project-map.json` is the only machine-local mapping file; it stores the vault's one-time Project/Workspace registration plus mappings between external Project roots, Project IDs, and logical container IDs. An external Project link deliberately has no Workspace locator. External Projects are not plugin-owned storage boundaries. If a directory disappears or a Paseo Project is removed, scans emit a warning but preserve the mapping and every Draft. Host-side Project relationships are checked read-only through the complete Project/Workspace directory in the Paseo SDK, never through an RPC that accepts client-supplied paths.
 
-The client loads the complete paged Workspace directory and the host-provided empty-Project records, then keeps that directory current through the Paseo Workspace subscription. A Project without a Workspace remains visible for filtering but cannot be selected as a Draft scope or new-Agent target until Paseo creates a Workspace locator. When a persisted locator is archived, server operations search only the same logical `projectId`, validate a current Workspace snapshot and root, and atomically replace the machine-local locator before continuing. They never fall back to another Project or to a global Agent search.
+The client loads the complete paged Workspace directory and the host-provided empty-Project records, then keeps that directory current through the Paseo Workspace subscription. A Project without a Workspace remains a complete Project choice: it can own a Draft scope, resolve to its server-validated root, and run Prompt generation. New-Agent placement is a separate decision. The user can select an existing Workspace or **Create a new Workspace** under the Project; after Paseo acknowledges creation, the client retains that exact Workspace ID before refresh or dispatch, so a retry never creates another Workspace implicitly. Server Project resolution stays constrained to the requested logical `projectId`, checks consistent roots across Project descriptors, and never falls back to another Project or a global Agent search.
 
-Draft metadata and summaries use schema v5. Scope represents only Inbox or source-Project ownership. It does not record Workspace or Agent. Workspace IDs are machine-local locators used to resolve a Project and create an Agent; Agent IDs exist only in dispatch, generation, session, and timeline facts. `contentOrigin` is either manual or generated provenance; only a body change, external edit, or checkpoint restore resets it to manual. Every scope stores its lineage directly under the single `drafts/` directory.
+Draft metadata and summaries use schema v5. Scope represents only Inbox or source-Project ownership. It does not record Workspace or Agent. Workspace IDs are machine-local execution placement: they remain in actual new-Agent dispatch targets, linked sessions, and the vault's own Paseo registration, but are not needed to identify or resolve an external Project. Agent IDs exist only in dispatch, generation, session, and timeline facts. `contentOrigin` is either manual or generated provenance; only a body change, external edit, or checkpoint restore resets it to manual. Every scope stores its lineage directly under the single `drafts/` directory.
 
 The client applies a one-second stabilization window to scope selection. Consecutive selections keep only the last target; returning to the canonical scope cancels the entire interaction without an RPC. A stable, effective scope change creates a checkpoint and then atomically updates the same `meta.json`. It does not move a directory or create a scope-move journal. The Draft ID and physical path remain unchanged. Selecting the same Project is a no-op and creates no checkpoint, event, or version.
 
@@ -68,7 +68,7 @@ The three-character uppercase Draft code shown in the wide editor is determinist
 
 The current version does not create or write `worklog/`. Legacy Worklog Markdown is preserved and read only as historical entries during catalog rebuilds; neither the client nor server exposes an append path.
 
-Legacy schema-v2 `scope.workspaceId` and `scope.agentId` fields are compatibility input. Schemas drop them on read so they no longer participate in ownership, filtering, or scope comparisons; the next ordinary mutable write naturally removes them. An archived v2 Draft without `archivedFromStatus` normalizes to `draft`. Legacy v3 `starred` normalizes to `ready`, as does `archivedFromStatus: starred`. Schema v2–v4 reads normalize `contentOrigin` to manual without rewriting files; the next normal mutable write atomically upgrades them to v5. Immutable historical snapshots are not batch-rewritten, and legacy fields in them are ignored at runtime. Interrupted legacy scope-journal recovery also normalizes to Project scope.
+Legacy schema-v2 `scope.workspaceId` and `scope.agentId` fields are compatibility input. Schemas drop them on read so they no longer participate in ownership, filtering, or scope comparisons; the next ordinary mutable write naturally removes them. Project-map schema v1 and generation-job schema v1 also accept their former source `workspaceId`, transform to Project-only schema v2, and atomically persist v2 on initialization or the next job transition. An archived v2 Draft without `archivedFromStatus` normalizes to `draft`. Legacy v3 `starred` normalizes to `ready`, as does `archivedFromStatus: starred`. Schema v2–v4 reads normalize `contentOrigin` to manual without rewriting files; the next normal mutable write atomically upgrades them to v5. Immutable historical snapshots are not batch-rewritten, and legacy fields in them are ignored at runtime. Interrupted legacy scope-journal recovery also normalizes to Project scope.
 
 ## Draft lifecycle and permanent deletion
 
@@ -120,6 +120,7 @@ After an external tool edits a closed Draft, the user can run **Refresh files** 
 - Tag mutations are isolated from the body revision. They must not change version, hash, update time, state, recovery/dispatch lineage, or Worklog.
 - Tag comparison, filtering, rename, merge, and bulk removal are case-insensitive. A parent filter matches itself and descendants; multiple selected nodes use OR semantics.
 - A rapid scope round trip inside the client stabilization window must cancel without a server call, checkpoint, event, or version change. A stable effective change submits exactly once.
+- Project scope and container RPCs accept only a logical `projectId`; they reject Workspace IDs and client-supplied roots. A Project with zero Workspaces remains selectable and resolvable.
 - `draft → ready` creates a `ready` checkpoint. Any real content edit returns `ready` to `draft`; a no-op save does not.
 - An external edit becomes a checkpoint and event on the next read or save and cannot be silently overwritten.
 - Generation RPCs accept only logical IDs and filters; clients cannot submit bodies, absolute paths, Agent cwd, or Agent replies. One unresolved job blocks canonical Draft mutations and sending until apply, discard, or abandon.
@@ -129,6 +130,7 @@ After an external tool edits a closed Draft, the user can run **Refresh files** 
 - Worklog is a read-only projection of user activity and dispatch results. It exposes no create, edit, or note-write path. Recovery checkpoints remain in Draft lineage and are counted in the Draft but are not expanded into the main timeline. Canonical scope/state events remain complete, while round trips committed within ten seconds are projected as a net result; an unchanged net state is hidden. Dates and times use the client's local timezone.
 - Legacy Worklog Markdown remains read-only and unchanged. Layout migration may archive its parent container under `legacy/`, but path-boundary and symlink/Junction protections still apply.
 - Dispatch freezes a snapshot first. Failed retry reuses the snapshot and `clientMessageId`; an archived Draft must be restored before retry.
+- After a new Workspace creation is acknowledged, the client changes placement to that exact Workspace before refresh or dispatch. Failures reuse it and never issue another implicit Workspace create.
 - Pending or failed dispatch may reconcile with the Agent timeline in any Draft state. Reconciliation confirms an existing delivery and never resends by itself.
 - Permanent deletion rejects active Drafts, pending/malformed dispatches, stale version/hash, out-of-bound paths, and symlink/Junction traversal. Completion must leave no second canonical lineage or Draft events.
 - A single corrupt JSON file produces a warning and is skipped; other canonical content still scans.

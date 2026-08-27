@@ -29,7 +29,17 @@ export interface PaseoWorkspaceRegistrar {
       sort: Array<{ key: "activity_at"; direction: "desc" }>;
       page: { limit: number; cursor?: string };
     }): Promise<{
-      entries: Array<{ id: string; projectId: string }>;
+      entries: Array<{
+        id: string;
+        projectId: string;
+        projectDisplayName?: string;
+        projectRootPath?: string;
+      }>;
+      emptyProjects?: Array<{
+        projectId: string;
+        projectDisplayName: string;
+        projectRootPath: string;
+      }>;
       pageInfo: { nextCursor: string | null; hasMore: boolean };
     }>;
   };
@@ -41,7 +51,7 @@ export interface EnsureAndRegisterResult {
   registrationWarning: string | null;
 }
 
-export async function resolveSourceProject(
+async function resolveWorkspaceProject(
   paseo: PaseoWorkspaceRegistrar,
   projectId: string,
   workspaceId: string,
@@ -57,7 +67,6 @@ export async function resolveSourceProject(
   }
   return {
     projectId,
-    workspaceId,
     rootPath: workspace.projectRootPath,
     name: workspace.projectDisplayName,
   };
@@ -66,33 +75,60 @@ export async function resolveSourceProject(
 export async function resolveAvailableSourceProject(
   paseo: PaseoWorkspaceRegistrar,
   projectId: string,
-  preferredWorkspaceId: string,
 ): Promise<ResolvedSourceProject> {
-  try {
-    return await resolveSourceProject(paseo, projectId, preferredWorkspaceId);
-  } catch (preferredError) {
-    if (!paseo.workspaces.list) throw preferredError;
-    let cursor: string | undefined;
-    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-      const page = await paseo.workspaces.list({
-        filter: { projectId },
-        sort: [{ key: "activity_at", direction: "desc" }],
-        page: { limit: 200, ...(cursor ? { cursor } : {}) },
-      });
-      for (const candidate of page.entries) {
-        if (candidate.projectId !== projectId || candidate.id === preferredWorkspaceId) continue;
-        try {
-          return await resolveSourceProject(paseo, projectId, candidate.id);
-        } catch {
-          // Continue through the current Project's live Workspace locators.
-        }
-      }
-      if (!page.pageInfo.hasMore || !page.pageInfo.nextCursor) break;
-      cursor = page.pageInfo.nextCursor;
-    }
-    const message = preferredError instanceof Error ? preferredError.message : String(preferredError);
-    throw new Error(`Paseo Project ${projectId} has no available Workspace locator: ${message}`);
+  if (!paseo.workspaces.list) {
+    throw new Error(`Paseo Project directory is unavailable for ${projectId}`);
   }
+
+  let cursor: string | undefined;
+  let resolved: ResolvedSourceProject | null = null;
+  const observe = (candidate: ResolvedSourceProject) => {
+    if (!resolved) {
+      resolved = candidate;
+      return;
+    }
+    if (normalizePath(resolved.rootPath) !== normalizePath(candidate.rootPath)) {
+      throw new Error(`Paseo Project ${projectId} was reported with conflicting roots`);
+    }
+  };
+
+  for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+    const page = await paseo.workspaces.list({
+      filter: { projectId },
+      sort: [{ key: "activity_at", direction: "desc" }],
+      page: { limit: 200, ...(cursor ? { cursor } : {}) },
+    });
+    for (const project of page.emptyProjects ?? []) {
+      if (project.projectId !== projectId) continue;
+      observe({
+        projectId,
+        rootPath: project.projectRootPath,
+        name: project.projectDisplayName,
+      });
+    }
+    for (const candidate of page.entries) {
+      if (candidate.projectId !== projectId) continue;
+      if (candidate.projectRootPath && candidate.projectDisplayName) {
+        observe({
+          projectId,
+          rootPath: candidate.projectRootPath,
+          name: candidate.projectDisplayName,
+        });
+        continue;
+      }
+      try {
+        observe(await resolveWorkspaceProject(paseo, projectId, candidate.id));
+      } catch {
+        // Continue through this Project's remaining descriptors and Workspaces.
+      }
+    }
+    if (!page.pageInfo.hasMore || !page.pageInfo.nextCursor) {
+      if (resolved) return resolved;
+      throw new Error(`Paseo Project is unavailable: ${projectId}`);
+    }
+    cursor = page.pageInfo.nextCursor;
+  }
+  throw new Error(`Paseo Project directory exceeded the pagination safety limit while resolving ${projectId}`);
 }
 
 async function registerContainer(
@@ -154,9 +190,8 @@ export async function ensureAndRegisterProjectContainer(
   store: PromptStudioStore,
   paseo: PaseoWorkspaceRegistrar,
   projectId: string,
-  workspaceId: string,
 ): Promise<EnsureAndRegisterResult> {
-  const source = await resolveAvailableSourceProject(paseo, projectId, workspaceId);
+  const source = await resolveAvailableSourceProject(paseo, projectId);
   const managedSelf = await store.findContainerByRoot(source.rootPath);
   if (managedSelf) {
     return registerContainer(store, paseo, await store.ensureContainer(null));

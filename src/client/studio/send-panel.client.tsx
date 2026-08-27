@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type PluginTheme, usePaseo, useRpc } from "@getpaseo/plugin";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
@@ -27,12 +27,20 @@ import {
 } from "../ui.client";
 import { errorMessage, formatWhen } from "./studio-formatters.client";
 import { ProjectWorkspacePicker } from "./project-workspace-picker.client";
-import type { ProjectChoice } from "./project-choices.client";
+import { isSamePath, type ProjectChoice } from "./project-choices.client";
 import type { StudioProjectContext } from "./studio-types.client";
+import { WORKSPACE_DIRECTORY_QUERY_KEY } from "./workspace-directory.client";
 import type { WorkspaceDirectoryEntry } from "./workspace-directory-state.client";
 import { groupWorkspacesByProject } from "./workspace-groups.client";
 
 const RESOURCE_STALE_TIME_MS = 30_000;
+type NewAgentPlacementKind = "existing_workspace" | "new_workspace";
+
+interface RetainedWorkspacePlacement {
+  id: string;
+  projectId: string;
+  projectRootPath: string;
+}
 
 export function SessionSummary({ dispatch, theme }: { dispatch: Dispatch; theme: PluginTheme }) {
   const { t } = useI18n();
@@ -100,6 +108,7 @@ export function SendPanel({
   const { t, locale } = useI18n();
   const palette = useMemo(() => paletteOf(theme), [theme]);
   const paseo = usePaseo();
+  const queryClient = useQueryClient();
   const sendDispatch = useRpc(dispatchSendRpc);
   const retryDispatch = useRpc(dispatchRetryRpc);
   const reconcileDispatch = useRpc(dispatchReconcileRpc);
@@ -107,6 +116,8 @@ export function SendPanel({
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(preferredAgentId ?? null);
   const [agentQuery, setAgentQuery] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
+  const [placementKind, setPlacementKind] = useState<NewAgentPlacementKind>("existing_workspace");
+  const [retainedWorkspace, setRetainedWorkspace] = useState<RetainedWorkspacePlacement | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
   const initializedDefaultTargetRef = useRef<string | null>(null);
@@ -134,7 +145,7 @@ export function SendPanel({
     [currentProjectId, projects, workspaces],
   );
   const contextualWorkspace = projectContext?.projectId === currentProjectId
-    ? workspaces.find((workspace) => workspace.id === projectContext.workspaceLocatorId) ?? null
+    ? workspaces.find((workspace) => workspace.id === projectContext.preferredWorkspaceId) ?? null
     : null;
   const currentProjectWorkspace = contextualWorkspace
     ?? workspaces.find((workspace) => workspace.projectId === currentProjectId)
@@ -143,13 +154,25 @@ export function SendPanel({
   const selectedWorkspace = workspaces.find(
     (workspace) => workspace.id === workspaceId && workspace.projectId === selectedProjectId,
   ) ?? null;
+  const retainedSelection = retainedWorkspace?.id === workspaceId
+    && retainedWorkspace.projectId === selectedProjectId
+    ? retainedWorkspace
+    : null;
+  const selectedWorkspaceId = selectedWorkspace?.id ?? retainedSelection?.id ?? null;
+  const selectedProject = projects.find((project) => project.projectId === selectedProjectId) ?? null;
+  const providerDirectory = placementKind === "new_workspace"
+    ? selectedProject?.projectRootPath ?? null
+    : selectedWorkspace?.workspaceDirectory
+      ?? selectedWorkspace?.projectRootPath
+      ?? retainedSelection?.projectRootPath
+      ?? null;
   const providersQuery = useQuery({
-    queryKey: ["prompt-studio", "providers", selectedWorkspace?.projectRootPath ?? selectedWorkspace?.workspaceDirectory ?? ""],
+    queryKey: ["prompt-studio", "providers", providerDirectory ?? ""],
     queryFn: () => paseo.providers.waitForReady({
-      cwd: selectedWorkspace?.workspaceDirectory ?? selectedWorkspace?.projectRootPath,
+      cwd: providerDirectory ?? undefined,
       timeoutMs: 20_000,
     }),
-    enabled: targetKind === "new_agent" && Boolean(selectedWorkspace),
+    enabled: targetKind === "new_agent" && Boolean(providerDirectory),
     staleTime: RESOURCE_STALE_TIME_MS,
     refetchInterval: false,
   });
@@ -180,13 +203,19 @@ export function SendPanel({
       setSelectedProjectId(defaultGroup.projectId);
       setExpandedProjectId(defaultGroup.projectId);
       setWorkspaceId(defaultWorkspace?.id ?? "");
+      setPlacementKind(defaultWorkspace ? "existing_workspace" : "new_workspace");
       initializedDefaultTargetRef.current = defaultTargetKey;
       return;
     }
     const currentWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
     const selectedProjectExists = workspaceGroups.some((group) => group.projectId === selectedProjectId);
     if (selectedProjectExists) {
-      if (currentWorkspace && currentWorkspace.projectId !== selectedProjectId) setWorkspaceId("");
+      if (currentWorkspace && currentWorkspace.projectId !== selectedProjectId) {
+        const selectedGroup = workspaceGroups.find((group) => group.projectId === selectedProjectId);
+        const replacement = selectedGroup?.workspaces[0] ?? null;
+        setWorkspaceId(replacement?.id ?? "");
+        setPlacementKind(replacement ? "existing_workspace" : "new_workspace");
+      }
       if (
         expandedProjectId !== null
         && !workspaceGroups.some((group) => group.projectId === expandedProjectId)
@@ -201,6 +230,7 @@ export function SendPanel({
     setSelectedProjectId(defaultGroup.projectId);
     setExpandedProjectId(defaultGroup.projectId);
     setWorkspaceId(fallbackWorkspace?.id ?? "");
+    setPlacementKind(fallbackWorkspace ? "existing_workspace" : "new_workspace");
   }, [
     currentProjectId,
     currentProjectWorkspace,
@@ -253,28 +283,79 @@ export function SendPanel({
   }, [agentQuery, agentsQuery.data?.entries, currentProjectId, preferredWorkspaceId, workspaces]);
 
   async function send() {
-    let target: DispatchTarget;
-    if (targetKind === "existing_agent") {
-      if (!selectedAgentId) return;
-      target = { kind: "existing_agent", agentId: selectedAgentId };
-    } else {
-      if (!workspaceId || !providerId || !modelId) return;
-      target = {
-        kind: "new_agent",
-        workspaceId,
-        config: {
-          provider: providerId,
-          model: modelId,
-          modeId,
-          thinkingOptionId: thinkingId,
-          title: agentTitle.trim() || null,
-        },
-      };
-    }
+    if (targetKind === "existing_agent" && !selectedAgentId) return;
+    if (targetKind === "new_agent" && (!providerId || !modelId)) return;
+    if (
+      targetKind === "new_agent"
+      && placementKind === "existing_workspace"
+      && !selectedWorkspaceId
+    ) return;
+    if (
+      targetKind === "new_agent"
+      && placementKind === "new_workspace"
+      && !selectedProject?.projectRootPath
+    ) return;
     setError(null);
-    setBusyDispatchId("new");
+    setBusyDispatchId(
+      targetKind === "new_agent" && placementKind === "new_workspace" ? "workspace" : "new",
+    );
     onBusyChange?.(true);
     try {
+      let target: DispatchTarget;
+      if (targetKind === "existing_agent") {
+        target = { kind: "existing_agent", agentId: selectedAgentId as string };
+      } else {
+        let targetWorkspaceId = selectedWorkspaceId ?? "";
+        if (placementKind === "new_workspace") {
+          const project = selectedProject as ProjectChoice & { projectRootPath: string };
+          const workspace = await paseo.workspaces.create({
+            source: {
+              kind: "directory",
+              path: project.projectRootPath,
+              projectId: project.projectId,
+            },
+          });
+          if (!workspace.id) throw new Error(t("send.project.workspaceCreateUnavailable"));
+          if (workspace.projectId && workspace.projectId !== project.projectId) {
+            throw new Error(t("send.project.workspaceCreateWrongProject"));
+          }
+          targetWorkspaceId = workspace.id;
+          // Retain the acknowledged Workspace before any follow-up call. If
+          // refresh or dispatch fails, retry targets this exact Workspace and
+          // never issues another create request implicitly.
+          setRetainedWorkspace({
+            id: targetWorkspaceId,
+            projectId: project.projectId,
+            projectRootPath: project.projectRootPath,
+          });
+          setWorkspaceId(targetWorkspaceId);
+          setPlacementKind("existing_workspace");
+          void queryClient.invalidateQueries({ queryKey: WORKSPACE_DIRECTORY_QUERY_KEY });
+          const current = await workspace.refresh();
+          if (!current) throw new Error(t("send.project.workspaceCreateUnavailable"));
+          if (current.id !== targetWorkspaceId) {
+            throw new Error(t("send.project.workspaceCreateUnavailable"));
+          }
+          if (current.projectId !== project.projectId) {
+            throw new Error(t("send.project.workspaceCreateWrongProject"));
+          }
+          if (!isSamePath(current.projectRootPath, project.projectRootPath)) {
+            throw new Error(t("send.project.workspaceCreateWrongRoot"));
+          }
+          setBusyDispatchId("new");
+        }
+        target = {
+          kind: "new_agent",
+          workspaceId: targetWorkspaceId,
+          config: {
+            provider: providerId,
+            model: modelId,
+            modeId,
+            thinkingOptionId: thinkingId,
+            title: agentTitle.trim() || null,
+          },
+        };
+      }
       const result = await sendDispatch({ draftId: detail.summary.id, target });
       onUpdated(result.draft);
     } catch (cause) {
@@ -292,7 +373,26 @@ export function SendPanel({
     }
     setSelectedProjectId(projectId);
     setExpandedProjectId(projectId);
+    const workspace = workspaceGroups.find((group) => group.projectId === projectId)?.workspaces[0] ?? null;
+    const retained = !workspace && retainedWorkspace?.projectId === projectId ? retainedWorkspace : null;
+    setWorkspaceId(workspace?.id ?? retained?.id ?? "");
+    setPlacementKind(workspace || retained ? "existing_workspace" : "new_workspace");
+  }
+
+  function selectNewWorkspace(projectId: string) {
+    setSelectedProjectId(projectId);
+    setExpandedProjectId(projectId);
     setWorkspaceId("");
+    setPlacementKind("new_workspace");
+  }
+
+  function selectWorkspace(nextWorkspaceId: string) {
+    const workspace = workspaces.find((candidate) => candidate.id === nextWorkspaceId);
+    if (!workspace) return;
+    setSelectedProjectId(workspace.projectId);
+    setExpandedProjectId(workspace.projectId);
+    setWorkspaceId(workspace.id);
+    setPlacementKind("existing_workspace");
   }
 
   async function mutateDispatch(kind: "retry" | "reconcile", dispatch: Dispatch) {
@@ -314,7 +414,13 @@ export function SendPanel({
 
   const canSend = targetKind === "existing_agent"
     ? Boolean(selectedAgentId)
-    : Boolean(selectedWorkspace && providerId && modelId && (modes.length === 0 || modeId));
+    : Boolean(
+        providerDirectory
+        && providerId
+        && modelId
+        && (modes.length === 0 || modeId)
+        && (placementKind === "new_workspace" ? selectedProject : selectedWorkspaceId),
+      );
   const currentWorkspaceId = preferredWorkspaceId;
 
   return (
@@ -395,10 +501,12 @@ export function SendPanel({
             <ProjectWorkspacePicker
               expandedProjectId={expandedProjectId}
               groups={workspaceGroups}
+              onNewWorkspaceSelect={selectNewWorkspace}
               onProjectPress={selectProject}
-              onWorkspaceSelect={setWorkspaceId}
+              onWorkspaceSelect={selectWorkspace}
+              selectedNewWorkspace={placementKind === "new_workspace"}
               selectedProjectId={selectedProjectId}
-              selectedWorkspaceId={workspaceId || null}
+              selectedWorkspaceId={selectedWorkspaceId}
               theme={theme}
             />
             {workspacesPending ? <ActivityIndicator color={theme.colors.accent} /> : null}
@@ -407,6 +515,12 @@ export function SendPanel({
               && selectedProjectId
               && workspaceGroups.find((group) => group.projectId === selectedProjectId)?.workspaces.length === 0
               ? <Hint theme={theme}>{t("send.project.noWorkspaces")}</Hint>
+              : null}
+            {!workspacesPending && selectedProjectId && !selectedProject?.projectRootPath
+              ? <Hint danger theme={theme}>{t("send.project.rootUnavailable")}</Hint>
+              : null}
+            {retainedSelection && !selectedWorkspace
+              ? <Hint theme={theme}>{t("send.project.workspaceRetained")}</Hint>
               : null}
 
             <FieldLabel theme={theme}>{t("send.provider.required")}</FieldLabel>
@@ -467,7 +581,9 @@ export function SendPanel({
         {error ? <Hint danger theme={theme}>{error}</Hint> : null}
         {sendDisabled ? <Hint theme={theme}>{sendDisabledReason ?? t("send.waitForAutosave")}</Hint> : null}
         <NativeButton
-          label={busyDispatchId === "new" ? t("send.sending") : t("send.action")}
+          label={busyDispatchId === "workspace"
+            ? t("send.creatingWorkspace")
+            : busyDispatchId === "new" ? t("send.sending") : t("send.action")}
           onPress={() => void send()}
           disabled={!canSend || busyDispatchId !== null || sendDisabled}
           style={{ alignSelf: "stretch" }}

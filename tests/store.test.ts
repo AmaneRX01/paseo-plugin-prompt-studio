@@ -33,7 +33,9 @@ moduleInternals._resolveFilename = function resolveTestVirtualModule(request, pa
 };
 
 let PromptStudioStore: typeof PromptStudioStoreType;
+let containerEnsureRpc: typeof import("../src/shared/contracts.shared").containerEnsureRpc;
 let draftAutosaveRpc: typeof import("../src/shared/contracts.shared").draftAutosaveRpc;
+let draftScopeRpc: typeof import("../src/shared/contracts.shared").draftScopeRpc;
 let draftTagsSetRpc: typeof import("../src/shared/contracts.shared").draftTagsSetRpc;
 let ensureAndRegisterInbox: typeof import("../src/server/project-registration.server").ensureAndRegisterInbox;
 let ensureAndRegisterProjectContainer: typeof import("../src/server/project-registration.server").ensureAndRegisterProjectContainer;
@@ -42,7 +44,12 @@ let createDispatchCoordinator: typeof import("../src/server/handlers.server").cr
 let createHandlers: typeof import("../src/server/handlers.server").createHandlers;
 let projectLinkWarnings: typeof import("../src/server/handlers.server").projectLinkWarnings;
 test.before(async () => {
-  ({ draftAutosaveRpc, draftTagsSetRpc } = await import("../src/shared/contracts.shared"));
+  ({
+    containerEnsureRpc,
+    draftAutosaveRpc,
+    draftScopeRpc,
+    draftTagsSetRpc,
+  } = await import("../src/shared/contracts.shared"));
   ({ PromptStudioStore } = await import("../src/server/store.server"));
   ({
     ensureAndRegisterInbox,
@@ -57,12 +64,29 @@ const globalScope: DraftScope = {
   projectName: null,
 };
 
+const SOURCE_WORKSPACE_ID = "wks_source_123";
 const source: ResolvedSourceProject = {
   projectId: "prj_source_123",
-  workspaceId: "wks_source_123",
   rootPath: path.resolve("D:\\example-app"),
   name: "Example App",
 };
+
+test("Project scope RPCs accept a logical Project without a Workspace locator", () => {
+  const target = { kind: "project", projectId: source.projectId } as const;
+  assert.equal(containerEnsureRpc.input.safeParse(target).success, true);
+  assert.equal(draftScopeRpc.input.safeParse({
+    draftId: "dr_1111111111111111",
+    target,
+  }).success, true);
+  assert.equal(containerEnsureRpc.input.safeParse({
+    ...target,
+    workspaceId: SOURCE_WORKSPACE_ID,
+  }).success, false);
+  assert.equal(draftScopeRpc.input.safeParse({
+    draftId: "dr_1111111111111111",
+    target: { ...target, rootPath: source.rootPath },
+  }).success, false);
+});
 
 async function doesNotExist(filePath: string): Promise<boolean> {
   try {
@@ -434,6 +458,44 @@ test("project links share the one vault registration and remain outside the port
   assert.deepEqual(inbox.summary.registration, registered.registration);
 });
 
+test("legacy Project maps drop Workspace locators during atomic initialization upgrade", async (t) => {
+  const { root, store } = await makeStore(t);
+  await store.ensureContainer(source);
+  const mapPath = path.join(root, "local", "project-map.json");
+  const current = JSON.parse(await readFile(mapPath, "utf8")) as {
+    schemaVersion: number;
+    projects: Array<{ source: null | Record<string, unknown> }>;
+  };
+  current.schemaVersion = 1;
+  for (const project of current.projects) {
+    if (project.source) project.source.workspaceId = SOURCE_WORKSPACE_ID;
+  }
+  await writeFile(mapPath, `${JSON.stringify(current, null, 2)}\n`, "utf8");
+
+  await new PromptStudioStore(root).ensureContainer(null);
+
+  const upgraded = JSON.parse(await readFile(mapPath, "utf8")) as {
+    schemaVersion: number;
+    projects: Array<{ source: null | Record<string, unknown> }>;
+  };
+  assert.equal(upgraded.schemaVersion, 2);
+  assert.equal(upgraded.projects[0]?.source?.projectId, source.projectId);
+  assert.equal("workspaceId" in (upgraded.projects[0]?.source ?? {}), false);
+
+  // Also repair a partially upgraded v2 file left by an interrupted older build.
+  if (upgraded.projects[0]?.source) {
+    upgraded.projects[0].source.workspaceId = "wks_partially_upgraded";
+  }
+  await writeFile(mapPath, `${JSON.stringify(upgraded, null, 2)}\n`, "utf8");
+  await new PromptStudioStore(root).ensureContainer(null);
+  const repaired = JSON.parse(await readFile(mapPath, "utf8")) as {
+    schemaVersion: number;
+    projects: Array<{ source: null | Record<string, unknown> }>;
+  };
+  assert.equal(repaired.schemaVersion, 2);
+  assert.equal("workspaceId" in (repaired.projects[0]?.source ?? {}), false);
+});
+
 test("container creation immediately registers through workspaces.open and retries a pending placement", async (t) => {
   const { store } = await makeStore(t);
   let attempts = 0;
@@ -441,14 +503,23 @@ test("container creation immediately registers through workspaces.open and retri
   const paseo = {
     workspaces: {
       ref: (_workspaceId: string) => ({
-        id: source.workspaceId,
+        id: SOURCE_WORKSPACE_ID,
         projectId: source.projectId,
         refresh: async () => ({
-          id: source.workspaceId,
+          id: SOURCE_WORKSPACE_ID,
           projectId: source.projectId,
           projectDisplayName: source.name,
           projectRootPath: source.rootPath,
         }),
+      }),
+      list: async () => ({
+        entries: [],
+        emptyProjects: [{
+          projectId: source.projectId,
+          projectDisplayName: source.name,
+          projectRootPath: source.rootPath,
+        }],
+        pageInfo: { nextCursor: null, hasMore: false },
       }),
       open: async (directory: string) => {
         openedPaths.push(directory);
@@ -468,12 +539,12 @@ test("container creation immediately registers through workspaces.open and retri
     },
   };
 
-  const failed = await ensureAndRegisterProjectContainer(store, paseo, source.projectId, source.workspaceId);
+  const failed = await ensureAndRegisterProjectContainer(store, paseo, source.projectId);
   assert.equal(failed.created, true);
   assert.equal(failed.container.registration.status, "pending");
   assert.match(failed.registrationWarning ?? "", /temporarily unavailable/i);
 
-  const retried = await ensureAndRegisterProjectContainer(store, paseo, source.projectId, source.workspaceId);
+  const retried = await ensureAndRegisterProjectContainer(store, paseo, source.projectId);
   assert.equal(retried.created, false);
   assert.equal(retried.registrationWarning, null);
   assert.equal(retried.container.registration.status, "registered");
@@ -484,25 +555,22 @@ test("container creation immediately registers through workspaces.open and retri
   }
 });
 
-test("an archived Project locator is replaced with a current Workspace and persisted", async (t) => {
+test("a Project without Workspaces resolves and persists without a Workspace locator", async (t) => {
   const { store } = await makeStore(t);
-  const replacementWorkspaceId = "wks_source_replacement";
   const paseo = {
     workspaces: {
       ref: (workspaceId: string) => ({
         id: workspaceId,
         projectId: source.projectId,
-        refresh: async () => workspaceId === replacementWorkspaceId
-          ? {
-              id: workspaceId,
-              projectId: source.projectId,
-              projectDisplayName: source.name,
-              projectRootPath: source.rootPath,
-            }
-          : null,
+        refresh: async () => null,
       }),
       list: async () => ({
-        entries: [{ id: replacementWorkspaceId, projectId: source.projectId }],
+        entries: [],
+        emptyProjects: [{
+          projectId: source.projectId,
+          projectDisplayName: source.name,
+          projectRootPath: source.rootPath,
+        }],
         pageInfo: { nextCursor: null, hasMore: false },
       }),
       open: async (directory: string) => ({
@@ -518,17 +586,68 @@ test("an archived Project locator is replaced with a current Workspace and persi
     },
   };
 
-  const resolved = await resolveAvailableSourceProject(
-    paseo,
-    source.projectId,
-    "wks_archived",
-  );
-  assert.equal(resolved.workspaceId, replacementWorkspaceId);
+  const resolved = await resolveAvailableSourceProject(paseo, source.projectId);
+  assert.deepEqual(resolved, source);
 
-  await ensureAndRegisterProjectContainer(store, paseo, source.projectId, "wks_archived");
+  await ensureAndRegisterProjectContainer(store, paseo, source.projectId);
   const linked = await store.getLinkedProjects();
-  assert.equal(linked[0]?.workspaceId, replacementWorkspaceId);
+  assert.equal("workspaceId" in (linked[0] ?? {}), false);
   assert.equal(linked[0]?.rootPath, source.rootPath);
+});
+
+test("Project resolution uses Project descriptors and rejects conflicting roots", async () => {
+  let refreshCount = 0;
+  const descriptorPaseo = {
+    workspaces: {
+      ref: (_workspaceId: string) => ({
+        id: "unused",
+        projectId: source.projectId,
+        refresh: async () => {
+          refreshCount += 1;
+          return null;
+        },
+      }),
+      list: async () => ({
+        entries: [{
+          id: SOURCE_WORKSPACE_ID,
+          projectId: source.projectId,
+          projectDisplayName: source.name,
+          projectRootPath: source.rootPath,
+        }],
+        pageInfo: { nextCursor: null, hasMore: false },
+      }),
+      open: async (_directory: string) => {
+        throw new Error("not used");
+      },
+    },
+  };
+  assert.deepEqual(await resolveAvailableSourceProject(descriptorPaseo, source.projectId), source);
+  assert.equal(refreshCount, 0, "a Project descriptor must not depend on a Workspace refresh");
+
+  const conflictingPaseo = {
+    ...descriptorPaseo,
+    workspaces: {
+      ...descriptorPaseo.workspaces,
+      list: async () => ({
+        entries: [{
+          id: SOURCE_WORKSPACE_ID,
+          projectId: source.projectId,
+          projectDisplayName: source.name,
+          projectRootPath: source.rootPath,
+        }],
+        emptyProjects: [{
+          projectId: source.projectId,
+          projectDisplayName: source.name,
+          projectRootPath: path.resolve("D:\\different-example-app"),
+        }],
+        pageInfo: { nextCursor: null, hasMore: false },
+      }),
+    },
+  };
+  await assert.rejects(
+    resolveAvailableSourceProject(conflictingPaseo, source.projectId),
+    /conflicting roots/i,
+  );
 });
 
 test("Inbox registration also uses workspaces.open and rejects missing Project identity", async (t) => {
@@ -571,6 +690,15 @@ test("vault subdirectories cannot be linked back as external Projects", async (t
           projectRootPath: legacyRoot,
         }),
       }),
+      list: async () => ({
+        entries: [],
+        emptyProjects: [{
+          projectId: "prj_legacy_companion",
+          projectDisplayName: "Legacy Prompt Studio companion",
+          projectRootPath: legacyRoot,
+        }],
+        pageInfo: { nextCursor: null, hasMore: false },
+      }),
       open: async (_directory: string) => {
         opened = true;
         throw new Error("must not register a nested vault path");
@@ -579,7 +707,7 @@ test("vault subdirectories cannot be linked back as external Projects", async (t
   };
 
   await assert.rejects(
-    ensureAndRegisterProjectContainer(store, paseo, "prj_legacy_companion", "wks_legacy_companion"),
+    ensureAndRegisterProjectContainer(store, paseo, "prj_legacy_companion"),
     /vault or legacy vault subdirectory cannot be linked as an external Project/i,
   );
   assert.equal(opened, false);
@@ -672,7 +800,7 @@ test("scope changes keep one physical Draft lineage while updating its logical P
   assert.deepEqual(moveEvent.details.sourceScope, globalScope);
   assert.deepEqual(moveEvent.details.targetScope, moved.summary.scope);
   assert.match(moveEvent.summary, new RegExp(source.name));
-  assert.doesNotMatch(moveEvent.summary, new RegExp(source.workspaceId));
+  assert.doesNotMatch(moveEvent.summary, new RegExp(SOURCE_WORKSPACE_ID));
 
   const unchanged = await store.moveDraftScope(draft.summary.id, project.summary.id, moved.summary.scope);
   assert.equal(unchanged.summary.version, moved.summary.version);
@@ -683,7 +811,7 @@ test("scope changes keep one physical Draft lineage while updating its logical P
   assert.equal(scopedTimeline.timeline.some((entry) => entry.type === "checkpoint"), false);
   const scopedEntry = scopedTimeline.timeline.find((entry) => entry.type === "scope" && entry.draftId === draft.summary.id);
   assert.match(scopedEntry?.summary ?? "", new RegExp(source.name));
-  assert.doesNotMatch(scopedEntry?.summary ?? "", new RegExp(source.workspaceId));
+  assert.doesNotMatch(scopedEntry?.summary ?? "", new RegExp(SOURCE_WORKSPACE_ID));
 
   const unscoped = await store.moveDraftScope(draft.summary.id, "ct_inbox", globalScope);
   assert.equal(unscoped.summary.id, draft.summary.id);
@@ -1626,7 +1754,6 @@ test("a removed linked Project reports a warning but retains its Draft until exp
   t.after(() => rm(linkedRoot, { recursive: true, force: true }));
   const linkedSource: ResolvedSourceProject = {
     projectId: "prj_removable",
-    workspaceId: "wks_removable",
     rootPath: linkedRoot,
     name: "Removable Project",
   };
@@ -1639,6 +1766,20 @@ test("a removed linked Project reports a warning but retains its Draft until exp
   );
   const canonicalDraftRoot = draftPath(root, draft.summary.id);
   assert.equal(await doesNotExist(canonicalDraftRoot), false);
+
+  const availableWithoutWorkspaces = await projectLinkWarnings(store, {
+    workspaces: {
+      list: async () => ({
+        entries: [],
+        emptyProjects: [{
+          projectId: linkedSource.projectId,
+          projectRootPath: linkedSource.rootPath,
+        }],
+        pageInfo: { nextCursor: null, hasMore: false },
+      }),
+    },
+  });
+  assert.deepEqual(availableWithoutWorkspaces, []);
 
   const removedFromPaseo = await projectLinkWarnings(store, {
     workspaces: {
