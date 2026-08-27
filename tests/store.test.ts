@@ -178,6 +178,8 @@ interface FakeAgentState {
   provider: string;
   title: string | null;
   archivedAt?: string | null;
+  refreshError?: string;
+  refreshes: number;
   behavior: "success" | "reject" | "response-lost";
   sends: Array<{ text: string; messageId: string | undefined }>;
   timeline: FakeTimelineMessage[];
@@ -188,10 +190,11 @@ interface FakeWorkspaceState {
   projectId: string;
   projectRootPath: string;
   workspaceDirectory?: string;
-  behavior: "success" | "reject" | "response-lost";
+  behavior: "success" | "reject" | "response-lost" | "refresh-not-found";
   creates: Array<{
     config: { provider: string; modeId?: string; thinkingOptionId?: string };
     prompt: string;
+    requestId: string;
     clientMessageId: string;
     title?: string;
     labels?: Record<string, string>;
@@ -208,6 +211,7 @@ function createFakePaseo() {
       provider: "codex",
       title: input.id,
       behavior: "success",
+      refreshes: 0,
       sends: [],
       timeline: [],
       ...input,
@@ -219,18 +223,22 @@ function createFakePaseo() {
   function agentHandle(agentId: string) {
     const state = agents.get(agentId);
     if (!state) throw new Error(`Unknown fake agent: ${agentId}`);
+    const snapshot = () => ({
+      id: state.id,
+      workspaceId: state.workspaceId,
+      provider: state.provider,
+      title: state.title,
+      archivedAt: state.archivedAt ?? null,
+    });
     return {
       id: state.id,
       workspaceId: state.workspaceId,
-      refresh: async () => ({
-        agent: {
-          id: state.id,
-          workspaceId: state.workspaceId,
-          provider: state.provider,
-          title: state.title,
-          archivedAt: state.archivedAt ?? null,
-        },
-      }),
+      current: () => snapshot(),
+      refresh: async () => {
+        state.refreshes += 1;
+        if (state.refreshError) throw new Error(state.refreshError);
+        return { agent: snapshot() };
+      },
       send: async (text: string, options?: { messageId?: string }) => {
         state.sends.push({ text, messageId: options?.messageId });
         if (state.behavior === "response-lost") {
@@ -298,6 +306,9 @@ function createFakePaseo() {
                 provider: options.config.provider.split("/", 1)[0] ?? options.config.provider,
                 title: options.title ?? "New prompt agent",
                 behavior: "success",
+                ...(state.behavior === "refresh-not-found"
+                  ? { refreshError: `Agent not found: agt_created_${createdAgentSequence}` }
+                  : {}),
                 timeline: [{
                   type: "user_message",
                   text: options.prompt,
@@ -1960,9 +1971,40 @@ test("dispatcher creates a new Agent in the selected source Workspace with expli
     thinkingOptionId: "low",
   });
   assert.equal(workspace.creates[0].prompt, "exact new-agent prompt");
+  assert.equal(workspace.creates[0].requestId, dispatch.id);
   assert.equal(workspace.creates[0].clientMessageId, dispatch.clientMessageId);
   assert.equal(workspace.creates[0].labels?.["prompt-studio.dispatch"], dispatch.id);
   assert.equal(workspace.creates[0].labels?.["prompt-studio.snapshot"], dispatch.snapshotId);
+});
+
+test("new Agent dispatch trusts the create acknowledgement instead of racing an immediate refresh", async (t) => {
+  const { root, store, draft } = await createGlobalDraft(t, "Create race", "race-free new-agent prompt");
+  await markReady(store, draft.summary.id);
+  const fake = createFakePaseo();
+  const workspace = fake.addWorkspace({
+    id: "wks_create_race",
+    projectId: "prj_create_race",
+    projectRootPath: path.join(path.dirname(root), "source-for-create-race"),
+    behavior: "refresh-not-found",
+  });
+
+  const dispatch = await createDispatchCoordinator(store, fake.paseo).send(draft.summary.id, {
+    kind: "new_agent",
+    workspaceId: workspace.id,
+    config: {
+      provider: "codex",
+      model: "gpt-5.3-codex-spark",
+      modeId: "default",
+      thinkingOptionId: "low",
+      title: "Prompt Studio create race",
+    },
+  });
+
+  assert.equal(dispatch.status, "accepted");
+  assert.ok(dispatch.agentId);
+  assert.equal(fake.agents.get(dispatch.agentId)?.refreshes, 0);
+  assert.equal(workspace.creates.length, 1);
+  assert.equal(workspace.creates[0].requestId, dispatch.id);
 });
 
 test("a provider rejection is durable and retry reconciles before sending a duplicate", async (t) => {

@@ -53,6 +53,7 @@ interface DispatchTimelineEntry {
 interface DispatchAgentHandle {
   id: string;
   workspaceId: string | null;
+  current(): DispatchAgentSnapshot | null;
   refresh(requestId?: string): Promise<{ agent: DispatchAgentSnapshot } | null>;
   send(text: string, options?: { messageId?: string }): Promise<void>;
   timeline: {
@@ -88,6 +89,7 @@ interface DispatchWorkspaceHandle {
         thinkingOptionId?: string;
       };
       prompt: string;
+      requestId: string;
       clientMessageId: string;
       title?: string;
       labels?: Record<string, string>;
@@ -221,6 +223,22 @@ async function agentSnapshot(handle: DispatchAgentHandle): Promise<DispatchAgent
   return refreshed.agent;
 }
 
+function createdAgentSnapshot(
+  handle: DispatchAgentHandle,
+  expectedWorkspaceId: string,
+): DispatchAgentSnapshot {
+  const agent = handle.current();
+  if (!agent) throw new Error(`Paseo did not return the created Agent snapshot: ${handle.id}`);
+  if (agent.id !== handle.id) {
+    throw new Error(`Paseo returned a mismatched Agent snapshot for ${handle.id}`);
+  }
+  if ((agent.workspaceId ?? handle.workspaceId) !== expectedWorkspaceId) {
+    throw new Error(`Paseo created Agent ${handle.id} in an unexpected Workspace`);
+  }
+  if (agent.archivedAt) throw new Error(`Paseo agent is archived: ${handle.id}`);
+  return agent;
+}
+
 async function timelineContains(
   handle: DispatchAgentHandle,
   dispatch: Dispatch,
@@ -296,9 +314,10 @@ export function createDispatchCoordinator(store: PromptStudioStore, paseo: Dispa
   async function execute(dispatch: Dispatch, snapshot: Snapshot): Promise<Dispatch> {
     try {
       let handle: DispatchAgentHandle;
+      let agent: DispatchAgentSnapshot;
       if (dispatch.target.kind === "existing_agent") {
         handle = paseo.agents.ref(dispatch.target.agentId);
-        await agentSnapshot(handle);
+        agent = await agentSnapshot(handle);
         await handle.send(snapshot.markdown, { messageId: dispatch.clientMessageId });
       } else {
         const workspace = paseo.workspaces.ref(dispatch.target.workspaceId);
@@ -320,6 +339,7 @@ export function createDispatchCoordinator(store: PromptStudioStore, paseo: Dispa
               : {}),
           },
           prompt: snapshot.markdown,
+          requestId: dispatch.id,
           clientMessageId: dispatch.clientMessageId,
           ...(dispatch.target.config.title ? { title: dispatch.target.config.title } : {}),
           labels: {
@@ -327,8 +347,11 @@ export function createDispatchCoordinator(store: PromptStudioStore, paseo: Dispa
             "prompt-studio.snapshot": dispatch.snapshotId,
           },
         });
+        // create() already returns a handle seeded with the daemon's authoritative
+        // Agent snapshot. An immediate refresh can race the daemon's fetch index and
+        // turn a successful creation into a false "Agent not found" failure.
+        agent = createdAgentSnapshot(handle, dispatch.target.workspaceId);
       }
-      const agent = await agentSnapshot(handle);
       return await store.finalizeDispatch(dispatch.draftId, dispatch.id, {
         status: "accepted",
         agentId: handle.id,
