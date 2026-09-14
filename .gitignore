@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+
+# Build and type-check output
+dist/
+build/
+out/
+coverage/
+*.tsbuildinfo
+
+# Test and tool caches
+.prompt-studio-test/
+.cache/
+.tmp/
+tmp/
+temp/
+.nyc_output/
+
+# Prompt Studio runtime data (when PASEO_PROMPT_STUDIO_HOME points here)
+/catalog.json
+/local/
+/companions/
+/Prompt-Studio-Inbox/
+/.transactions/
+/.locks/
+
+# Runtime configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Locally saved browser artifacts
+saved_resource*.html
+.playwright-mcp/
