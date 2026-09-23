@@ -83,6 +83,8 @@ Each draft supports:
 
 The global draft list searches titles, tags, and current Markdown. It can filter by state, Project, or multiple nodes in the tag tree and sorts results by the most recent content update.
 
+In the Markdown editor, **Find / replace** searches the current body literally and without case sensitivity. Use **Previous** and **Next** to select matches, then replace one match or all matches. Cmd/Ctrl+F opens the search while the body is focused on desktop. Replacements use the normal autosave flow; replacement is unavailable when the draft is read-only or in conflict.
+
 Tag nodes show direct and aggregate counts. Selecting a draft tag applies its filter. Tags can be renamed globally, automatically merged into an existing case-insensitive destination, or added to and removed from multiple selected drafts. Checkpoints may be starred; drafts themselves do not have a starred state.
 
 ### 3.4 Worklog
@@ -99,6 +101,7 @@ Worklog does not import unrelated agent conversations. A linked session stores o
 Checkpoints are recovery data. They remain in the draft lineage and are counted in the editor, but they are not expanded into individual Worklog rows by default.
 
 Worklog is strictly read-only. It has no UI, RPC, or server path for adding manual log entries.
+Entries linked to an Agent offer **Open Agent**, which navigates to that Agent on the Worklog's Paseo host.
 
 ### 3.5 Prompt Agent actions and settings
 
@@ -138,53 +141,51 @@ The interface supports English and Simplified Chinese. It adapts to wide and com
 
 ### 5.1 Requirements
 
-- Node.js
-- npm
-- Paseo Desktop and daemon with a compatible plugin API
+- Paseo 0.9.x Desktop and daemon
 - Plugins enabled on the target daemon
+- Access to the Git repository, or a copy of the plugin directory, on the target daemon
 
 Paseo plugins are trusted and unsandboxed. Server code can access files, processes, credentials, and network resources on the daemon machine. Review the source before installing it and enable plugins only on a trusted machine.
 
-### 5.2 Install dependencies and validate
+### 5.2 Install the plugin
 
-Run from the repository root:
+In **Settings → Plugins**, enter `github:AmaneRX01/paseo-plugin-prompt-studio` as the plugin source and install it. The target daemon must be able to access this repository. The CLI equivalent is:
 
-**macOS / Linux**
-
-```bash
-npm install
-npm run check
-npm run smoke:compiler
+```text
+paseo plugin install github:AmaneRX01/paseo-plugin-prompt-studio
+paseo plugin ls
 ```
 
-**Windows**
-
-```powershell
-npm install
-npm run check
-npm run smoke:compiler
-```
-
-- `npm run check` performs strict TypeScript checking and integration tests.
-- `npm run smoke:compiler` uses the local Paseo plugin compiler to validate the client/server bundles, cleanup function, and contribution manifest.
-
-### 5.3 Install the plugin
+If the plugin directory is already on the target daemon, install it from that absolute path instead:
 
 **macOS / Linux**
 
 ```bash
 paseo plugin install /path/to/paseo-plugin-prompt-studio
-paseo plugin ls --json
+paseo plugin ls
 ```
 
 **Windows**
 
 ```powershell
 paseo plugin install D:\path\to\paseo-plugin-prompt-studio
-paseo plugin ls --json
+paseo plugin ls
 ```
 
-Confirm that the runtime ID is `prompt-studio`, its state is `running`, and no load error is present.
+Confirm that the runtime ID is `prompt-studio`, its state is `running`, and no load error is present. Paseo compiles the plugin and supplies its runtime libraries. No `npm install` is needed in the plugin directory. Git installation uses the committed revision; local changes reach another device only after they are pushed.
+
+### 5.3 Validate a development checkout
+
+Contributors who edit source or run tests should install development dependencies in their checkout:
+
+```text
+npm ci
+npm run check
+npm run smoke:compiler
+```
+
+- `npm run check` performs strict TypeScript checking and integration tests.
+- `npm run smoke:compiler` uses the local Paseo plugin compiler to validate the client/server bundles, cleanup function, and contribution manifest.
 
 ### 5.4 Reload after source changes
 
@@ -213,6 +214,7 @@ Use `plugin reload` for source changes. Do not restart the daemon merely to load
 1. Open a Workspace, then open Prompt Studio or a contextual Prompt Scratchpad from the Command Center.
 2. Select **New draft**.
 3. Enter a title and Markdown body. In the tag input, press Enter or comma to create a removable chip. Existing tags autocomplete, and `/` creates a hierarchical path.
+   Use **Find / replace** above the Markdown body to locate and replace text in this draft.
 4. Wait for the editor state to move from unsaved to saving and then saved.
 5. When the content is ready to dispatch, manually change the state from `draft` to `ready`. Prompt Studio immediately creates a checkpoint for that revision.
 
@@ -288,6 +290,7 @@ Permanent deletion removes the canonical draft directory, all checkpoints, snaps
 1. In an active Workspace, choose **Open Worklog** from the Command Center.
 2. Use search and filters to narrow the activity timeline.
 3. Select **Refresh files** when canonical files need to be rescanned.
+4. Select **Open Agent** on a linked entry to open its conversation.
 
 Worklog never offers draft creation, draft editing, or manual note entry. Make all changes in Prompt Studio or a Scratchpad.
 
@@ -530,5 +533,5 @@ Return to the Draft to inspect the durable job. **Sync** reconciles the recorded
 - [Architecture and data integrity](ARCHITECTURE.md)
 - [Development, testing, and manual validation](DEVELOPMENT.md)
 - [Agent collaboration rules](../AGENTS.md)
-- [Paseo plugin reference](https://paseo.sh/docs/plugins/v0.8/reference)
+- [Paseo plugin reference](https://paseo.sh/docs/plugins/reference)
 - [Paseo SDK reference](https://paseo.sh/docs/sdk/reference)

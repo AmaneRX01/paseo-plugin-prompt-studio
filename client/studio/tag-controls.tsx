@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import {
   Pressable,
   Text,
+  type ScrollView as NativeScrollViewRef,
   type TextInput as NativeInputRef,
   View,
   type StyleProp,
@@ -144,6 +145,8 @@ export interface TagChipInputProps {
   labels?: LabelOverrides;
   error?: string | null;
   style?: StyleProp<ViewStyle>;
+  /** Keep the editor tag field level with its neighboring compact action. */
+  toolbarSized?: boolean;
 }
 
 /** Controlled chip editor with case-insensitive completion and de-duplication. */
@@ -158,11 +161,14 @@ export function TagChipInput({
   labels: labelOverrides,
   error,
   style,
+  toolbarSized = false,
 }: TagChipInputProps) {
   const palette = useMemo(() => paletteOf(theme), [theme]);
   const labels = useMemo(() => labelsOf(labelOverrides), [labelOverrides]);
   const inputRef = useRef<NativeInputRef>(null);
+  const scrollRef = useRef<NativeScrollViewRef>(null);
   const suppressBlurCommit = useRef(false);
+  const chipCompact = compact || toolbarSized;
   const [query, setQuery] = useState("");
   const [focused, setFocused] = useState(false);
   const selectedKeys = useMemo(() => new Set(value.map(tagKey)), [value]);
@@ -233,6 +239,112 @@ export function TagChipInput({
     inputRef.current?.focus();
   }
 
+  const tagContent = (
+    <>
+      {value.map((tag) => (
+        <View
+          key={tagKey(tag)}
+          style={{
+            alignItems: "center",
+            backgroundColor: palette.controlStrong,
+            borderColor: palette.borderStrong,
+            borderRadius: uiMetrics.controlRadius,
+            borderWidth: 1,
+            flexDirection: "row",
+            maxWidth: "100%",
+            minHeight: chipCompact ? 24 : 28,
+            paddingLeft: chipCompact ? 7 : 9,
+          }}
+        >
+          <Text
+            numberOfLines={1}
+            style={{
+              color: theme.colors.foreground,
+              flexShrink: 1,
+              fontSize: font.caption,
+              lineHeight: 18,
+            }}
+          >
+            {tag}
+          </Text>
+          <Pressable
+            accessibilityLabel={labels.removeTag(tag)}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !editable }}
+            disabled={!editable}
+            hitSlop={4}
+            onPress={(event) => {
+              event.stopPropagation();
+              onChange(removeTag(value, tag));
+              suppressBlurCommit.current = false;
+              inputRef.current?.focus();
+            }}
+            onPressIn={() => {
+              suppressBlurCommit.current = true;
+            }}
+            style={({ pressed }) => ({
+              alignItems: "center",
+              alignSelf: "stretch",
+              justifyContent: "center",
+              opacity: pressed ? 0.85 : 1,
+              paddingHorizontal: chipCompact ? 6 : 7,
+            })}
+          >
+            <Text
+              style={{
+                color: theme.colors.foregroundMuted,
+                fontSize: 16,
+                lineHeight: 18,
+              }}
+            >
+              ×
+            </Text>
+          </Pressable>
+        </View>
+      ))}
+      <TextInput
+        ref={inputRef}
+        accessibilityLabel={labels.inputAccessibilityLabel}
+        autoCapitalize="none"
+        autoCorrect={false}
+        editable={editable}
+        onBlur={() => {
+          if (suppressBlurCommit.current) return;
+          setFocused(false);
+          commitQuery();
+        }}
+        onChangeText={changeQuery}
+        onFocus={() => {
+          suppressBlurCommit.current = false;
+          setFocused(true);
+          if (toolbarSized) scrollRef.current?.scrollToEnd({ animated: false });
+        }}
+        onKeyPress={({ nativeEvent }) => {
+          if (nativeEvent.key === "Backspace" && !query && value.length > 0) {
+            onChange(value.slice(0, -1));
+          }
+        }}
+        onSubmitEditing={commitQuery}
+        placeholder={value.length ? undefined : labels.inputPlaceholder}
+        placeholderTextColor={theme.colors.foregroundMuted}
+        returnKeyType="done"
+        selectionColor={theme.colors.accent}
+        style={{
+          color: theme.colors.foreground,
+          flexBasis: chipCompact ? 80 : 120,
+          flexGrow: 1,
+          fontSize: font.body,
+          lineHeight: chipCompact ? uiMetrics.compactControlLineHeight : uiMetrics.controlLineHeight,
+          minHeight: chipCompact ? 24 : 28,
+          minWidth: chipCompact ? 80 : 120,
+          paddingHorizontal: 4,
+          paddingVertical: 0,
+        }}
+        value={query}
+      />
+    </>
+  );
+
   return (
     <View style={[{ gap: 4 }, style]}>
       <Pressable
@@ -246,114 +358,29 @@ export function TagChipInput({
           borderRadius: uiMetrics.controlRadius,
           borderWidth: 1,
           flexDirection: "row",
-          flexWrap: "wrap",
-          gap: compact ? 4 : 6,
-          minHeight: compact ? uiMetrics.compactControlHeight : uiMetrics.controlHeight,
+          flexWrap: toolbarSized ? "nowrap" : "wrap",
+          gap: toolbarSized ? 0 : compact ? 4 : 6,
+          height: toolbarSized ? uiMetrics.compactControlHeight : undefined,
+          minHeight: toolbarSized ? uiMetrics.compactControlHeight : compact ? uiMetrics.compactControlHeight : uiMetrics.controlHeight,
           opacity: editable ? 1 : 0.5,
-          paddingHorizontal: compact ? 5 : 7,
-          paddingVertical: compact ? 4 : 5,
+          paddingHorizontal: toolbarSized ? 5 : compact ? 5 : 7,
+          paddingVertical: toolbarSized ? 2 : compact ? 4 : 5,
         }}
       >
-        {value.map((tag) => (
-          <View
-            key={tagKey(tag)}
-            style={{
-              alignItems: "center",
-              backgroundColor: palette.controlStrong,
-              borderColor: palette.borderStrong,
-              borderRadius: uiMetrics.controlRadius,
-              borderWidth: 1,
-              flexDirection: "row",
-              maxWidth: "100%",
-              minHeight: compact ? 24 : 28,
-              paddingLeft: compact ? 7 : 9,
+        {toolbarSized ? (
+          <ScrollView
+            contentContainerStyle={{ alignItems: "center", flexDirection: "row", flexGrow: 1, gap: 4 }}
+            horizontal
+            onContentSizeChange={() => {
+              if (focused) scrollRef.current?.scrollToEnd({ animated: false });
             }}
+            ref={scrollRef}
+            showsHorizontalScrollIndicator={false}
+            style={{ flex: 1, minWidth: 0 }}
           >
-            <Text
-              numberOfLines={1}
-              style={{
-                color: theme.colors.foreground,
-                flexShrink: 1,
-                fontSize: font.caption,
-                lineHeight: 18,
-              }}
-            >
-              {tag}
-            </Text>
-            <Pressable
-              accessibilityLabel={labels.removeTag(tag)}
-              accessibilityRole="button"
-              accessibilityState={{ disabled: !editable }}
-              disabled={!editable}
-              hitSlop={4}
-              onPress={(event) => {
-                event.stopPropagation();
-                onChange(removeTag(value, tag));
-                suppressBlurCommit.current = false;
-                inputRef.current?.focus();
-              }}
-              onPressIn={() => {
-                suppressBlurCommit.current = true;
-              }}
-              style={({ pressed }) => ({
-                alignItems: "center",
-                alignSelf: "stretch",
-                justifyContent: "center",
-                opacity: pressed ? 0.85 : 1,
-                paddingHorizontal: compact ? 6 : 7,
-              })}
-            >
-              <Text
-                style={{
-                  color: theme.colors.foregroundMuted,
-                  fontSize: 16,
-                  lineHeight: 18,
-                }}
-              >
-                ×
-              </Text>
-            </Pressable>
-          </View>
-        ))}
-        <TextInput
-          ref={inputRef}
-          accessibilityLabel={labels.inputAccessibilityLabel}
-          autoCapitalize="none"
-          autoCorrect={false}
-          editable={editable}
-          onBlur={() => {
-            if (suppressBlurCommit.current) return;
-            setFocused(false);
-            commitQuery();
-          }}
-          onChangeText={changeQuery}
-          onFocus={() => {
-            suppressBlurCommit.current = false;
-            setFocused(true);
-          }}
-          onKeyPress={({ nativeEvent }) => {
-            if (nativeEvent.key === "Backspace" && !query && value.length > 0) {
-              onChange(value.slice(0, -1));
-            }
-          }}
-          onSubmitEditing={commitQuery}
-          placeholder={value.length ? undefined : labels.inputPlaceholder}
-          placeholderTextColor={theme.colors.foregroundMuted}
-          returnKeyType="done"
-          selectionColor={theme.colors.accent}
-          style={{
-            color: theme.colors.foreground,
-            flexBasis: compact ? 80 : 120,
-            flexGrow: 1,
-            fontSize: font.body,
-            lineHeight: compact ? uiMetrics.compactControlLineHeight : uiMetrics.controlLineHeight,
-            minHeight: compact ? 24 : 28,
-            minWidth: compact ? 80 : 120,
-            paddingHorizontal: 4,
-            paddingVertical: 0,
-          }}
-          value={query}
-        />
+            {tagContent}
+          </ScrollView>
+        ) : tagContent}
       </Pressable>
 
       {visibleSuggestions.length ? (

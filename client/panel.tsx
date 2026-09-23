@@ -67,22 +67,26 @@ export function PromptWorkspaceExplorerPanel(props: PluginWorkspacePanelProps) {
  * surfaces, so the full Studio is also reachable as a tab inside an open
  * Workspace without leaving the Workspace layout.
  */
-export function PromptStudioWorkspacePanel({ theme, host, layout }: PluginWorkspacePanelProps) {
+export function PromptStudioWorkspacePanel({ theme, host, layout, navigation }: PluginWorkspacePanelProps) {
   return (
     <StudioView
       compact={layout.compact}
       hostLabel={host.label}
+      hostId={host.id}
+      navigation={navigation}
       theme={theme}
       view="drafts"
     />
   );
 }
 
-export function PromptWorklogWorkspacePanel({ theme, host, layout }: PluginWorkspacePanelProps) {
+export function PromptWorklogWorkspacePanel({ theme, host, layout, navigation }: PluginWorkspacePanelProps) {
   return (
     <StudioView
       compact={layout.compact}
       hostLabel={host.label}
+      hostId={host.id}
+      navigation={navigation}
       theme={theme}
       view="worklog"
     />

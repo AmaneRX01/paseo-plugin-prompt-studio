@@ -7,6 +7,7 @@ import {
   Description,
   EmptyState,
   MonoMeta,
+  NativeButton,
   SectionTitle,
   StatusPill,
   font,
@@ -21,6 +22,7 @@ export interface WorklogViewProps {
   compact?: boolean;
   theme: PluginTheme;
   timeline: TimelineEntry[];
+  onOpenAgent?: (agentId: string) => void;
 }
 
 function formatTime(locale: string, value: string): string {
@@ -31,7 +33,7 @@ function formatTime(locale: string, value: string): string {
   }
 }
 
-export function WorklogView({ compact = false, theme, timeline }: WorklogViewProps) {
+export function WorklogView({ compact = false, onOpenAgent, theme, timeline }: WorklogViewProps) {
   const { t, locale } = useI18n();
   const palette = useMemo(() => paletteOf(theme), [theme]);
   const grouped = useMemo(() => {
@@ -114,7 +116,16 @@ export function WorklogView({ compact = false, theme, timeline }: WorklogViewPro
                   <Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: font.caption, lineHeight: uiMetrics.compactControlLineHeight }}>
                     {entry.summary}
                   </Text>
-                  {entry.agentId ? (
+                  {entry.agentId ? onOpenAgent ? (
+                    <NativeButton
+                      label={t("worklog.openAgent", { id: shortId(entry.agentId) })}
+                      onPress={() => onOpenAgent(entry.agentId!)}
+                      small
+                      style={{ alignSelf: "flex-start" }}
+                      theme={theme}
+                      variant="outline"
+                    />
+                  ) : (
                     <MonoMeta theme={theme}>
                       {t("worklog.agentLine", { id: shortId(entry.agentId) })}
                     </MonoMeta>

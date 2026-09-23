@@ -1,4 +1,5 @@
 import type { PluginTheme } from "@getpaseo/plugin";
+import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import type { DraftStatus } from "../../shared/contracts";
 
 export type StudioTab = "worklog" | "drafts";
@@ -13,6 +14,8 @@ export interface StudioViewProps {
   theme: PluginTheme;
   compact: boolean;
   hostLabel: string;
+  hostId?: string;
+  navigation?: PluginSurfaceProps["navigation"];
   view: StudioTab;
   projectContext?: StudioProjectContext;
   preferredAgentId?: string | null;

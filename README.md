@@ -1,10 +1,3 @@
-> [!IMPORTANT]
-> **Global sidebar surfaces require a Paseo build with the Agent-creation race fixed.**
->
-> Official Paseo 0.8.0 retains the core **New Workspace → Draft Agent handoff** race: when several retained Draft screens are mounted, the same pending Draft can be processed multiple times and each duplicate `create_agent_request` creates another Agent in the same Workspace. In the latest confirmed incident, one `workspace.create.request` was followed by seven independent Agent creation requests, producing seven Agents within approximately 260 ms: one intended Agent and six duplicates.
->
-> This repository is used with a Paseo fork that adds the missing cross-instance Draft consumption and daemon-side creation idempotency, so Prompt Studio again registers its global Prompt Studio and Worklog sidebar surfaces and global Command Center actions. Plugin-side safeguards remain in place regardless of the host: dispatch fails closed across processes and coalesces the same canonical Draft revision and target even when retained clients supply different Dispatch IDs. On an unfixed official build, this global configuration can make native Agent creation unreliable; do not rely on such a build for important work.
-
 # paseo-plugin-prompt-studio
 
 Prompt Studio is a plaintext-first Paseo plugin for drafting, organizing, versioning, and safely dispatching prompts to agents. It keeps canonical content in human-readable Markdown and JSON, preserves immutable send snapshots, and presents related activity in a read-only worklog.
@@ -22,6 +15,7 @@ The product name is **Prompt Studio for Paseo**. The repository and npm package 
 - Sidebar multi-selection with select-all-matching, batch lifecycle actions (Draft, Ready, Archive, Restore), and bulk tag assignment/removal.
 - Hierarchical tags such as `Research/AI`, with autocomplete, case-insensitive deduplication, tree filtering, and global rename/merge.
 - Immutable send snapshots, idempotent dispatch IDs, stable `clientMessageId` reuse, safe retries, and Agent timeline reconciliation.
+- Literal find and replace in the Prompt editor, including match navigation and replace-all.
 - Project-scoped Prompt Agents for related-Prompt optimization and format-only cleanup, with deterministic context counts, budget previews, durable recovery, and conflict candidates.
 - Independent provider/model/thinking settings for both generation tasks, plus provider-native read-only controls and concise protection-level labels.
 - Archive and restore support, plus journaled permanent deletion for eligible archived drafts.
@@ -40,9 +34,9 @@ Preferences are shared by clients of the same host and survive plugin reload and
 
 ## Requirements
 
-- Node.js and npm
-- Paseo 0.8.x on the daemon and any app loading the client contributions
+- Paseo 0.9.x on the daemon and any app loading the client contributions
 - Plugins enabled on the target Paseo daemon
+- Access to the Git repository, or a copy of the plugin directory, on the target daemon
 
 Paseo plugins are trusted, unsandboxed code. The server side can access files, processes, credentials, and network resources on the daemon machine. Review the source before installing it and only enable plugins on a trusted host.
 
@@ -50,43 +44,34 @@ The Paseo plugin API is currently experimental and may introduce breaking change
 
 ## Install
 
-Install dependencies and validate the project:
+On another device, open **Settings → Plugins**, enter `github:AmaneRX01/paseo-plugin-prompt-studio` as the plugin source, and install it. The target daemon needs access to this repository. The CLI equivalent is:
 
-**macOS / Linux**
-
-```bash
-npm install
-npm run check
-npm run smoke:compiler
+```text
+paseo plugin install github:AmaneRX01/paseo-plugin-prompt-studio
+paseo plugin ls
 ```
 
-**Windows**
-
-```powershell
-npm install
-npm run check
-npm run smoke:compiler
-```
-
-Install the plugin from an absolute path and confirm that it is running:
+To use a plugin directory instead, install it from an absolute path on the target daemon:
 
 **macOS / Linux**
 
 ```bash
 paseo plugin install /path/to/paseo-plugin-prompt-studio
-paseo plugin ls --json
+paseo plugin ls
 ```
 
 **Windows**
 
 ```powershell
 paseo plugin install D:\path\to\paseo-plugin-prompt-studio
-paseo plugin ls --json
+paseo plugin ls
 ```
 
-The expected runtime ID is `prompt-studio`.
+The expected runtime ID is `prompt-studio`. Paseo compiles the TypeScript source and supplies the SDK, React, React Native, TanStack Query, and Zod at runtime. These packages are development dependencies here, so installing from Git or a copied directory does not require running `npm install` in that directory. Git installation uses the committed repository revision; local edits must be pushed before another device can receive them this way.
 
-After changing source files, validate and reload the installed plugin:
+Contributors who want to run typechecking, tests, or compiler smoke checks in a source checkout should run `npm ci` first.
+
+After changing source files in an installed plugin directory, validate and reload it:
 
 **macOS / Linux**
 
@@ -108,7 +93,7 @@ Use `paseo plugin reload` for source changes; do not restart the daemon.
 
 ## Using Prompt Studio
 
-Open **Prompt Studio** from the Paseo sidebar or Command Center. Create a draft, edit its title and Markdown, and optionally organize it with hierarchical tags. Autosave reports pending, saved, conflict, and failure states. The same views are also available as Workspace-local panels inside an open Workspace.
+Open **Prompt Studio** from the Paseo sidebar or Command Center. Create a draft, edit its title and Markdown, and optionally organize it with hierarchical tags. Use **Find / replace** above the Markdown editor to navigate matches and replace one or all occurrences; when the editor has focus on desktop, Cmd/Ctrl+F opens that search. Autosave reports pending, saved, conflict, and failure states. The same views are also available as Workspace-local panels inside an open Workspace.
 
 Choose **Select** in the Draft sidebar to select individual rows or every Draft matching the current filters. The batch panel can mark eligible selections as Draft or Ready, archive or restore them, and add or remove tags. Mixed-status selections are supported: each lifecycle action shows how many selected Drafts are eligible, retains every Draft's pre-archive state on restore, and reports partial failures instead of hiding them.
 
@@ -120,7 +105,7 @@ Generation runs are durable and single-flight per Draft. While one is unresolved
 
 When the content is ready to send, change the draft state to **Ready**. Prompt Studio creates a checkpoint before the transition. Select an existing Agent or configure a new Agent, then freeze and send the current version. For a new Agent, choose an existing Workspace or create a new Workspace directly under any available Project. An acknowledged new Workspace is retained across refresh or dispatch failure so retry cannot create another one implicitly. The frozen snapshot remains unchanged even if the draft is edited later.
 
-Open **Worklog** from the Paseo sidebar or Command Center for a read-only activity timeline. From a Workspace or Agent context, use **Open Prompt Scratchpad** to work with the drafts scoped to that Project. In Paseo 0.6 and later, the Workspace Scratchpad opens in Explorer beside **Files** and **Changes**; the full Workspace and Agent panels remain available as workspace tabs.
+Open **Worklog** from the Paseo sidebar or Command Center for a read-only activity timeline. Use **Open Agent** on a linked entry to jump to its conversation on the entry's host. From a Workspace or Agent context, use **Open Prompt Scratchpad** to work with the drafts scoped to that Project. In Paseo 0.6 and later, the Workspace Scratchpad opens in Explorer beside **Files** and **Changes**; the full Workspace and Agent panels remain available as workspace tabs.
 
 In the message composer, bare `/studio` and `/draft` keep their existing behavior and open Prompt Studio. When either command is followed by text, Prompt Studio creates a new Draft in the current Workspace's Project with that text as its Markdown body, then opens Prompt Studio; the text is consumed by the plugin and is not dispatched to the Agent. `/worklog` remains available from the sidebar and Command Center, but is no longer a Slash Command.
 
@@ -184,5 +169,5 @@ Run `npm run check` after TypeScript or test changes. Also run `npm run smoke:co
 - [Development and manual QA](docs/DEVELOPMENT.md)
 - [Paseo 0.8 migration and validation](docs/MIGRATION_0_8.md)
 - [Repository instructions](AGENTS.md)
-- [Paseo plugin reference](https://paseo.sh/docs/plugins/v0.8/reference)
+- [Paseo plugin reference](https://paseo.sh/docs/plugins/reference)
 - [Paseo SDK reference](https://paseo.sh/docs/sdk/reference)

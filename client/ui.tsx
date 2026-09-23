@@ -1,6 +1,6 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Modal, TextInput as HostTextInput } from "@getpaseo/plugin/client/react-native";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -10,6 +10,7 @@ import {
   View,
   type DimensionValue,
   type StyleProp,
+  type TextInput,
   type TextInputProps,
   type TextStyle,
   type ViewStyle,
@@ -360,6 +361,11 @@ export function NativeTextInput({
   variant = "filled",
   style,
   onSubmitEditing,
+  inputRef,
+  selection,
+  onSelectionChange,
+  onFocus,
+  onBlur,
 }: {
   theme: PluginTheme;
   value: string;
@@ -374,24 +380,32 @@ export function NativeTextInput({
   variant?: "filled" | "bare";
   style?: StyleProp<TextStyle>;
   onSubmitEditing?: () => void;
+  inputRef?: Ref<TextInput>;
+  selection?: TextInputProps["selection"];
+  onSelectionChange?: TextInputProps["onSelectionChange"];
+  onFocus?: TextInputProps["onFocus"];
+  onBlur?: TextInputProps["onBlur"];
 }) {
   const palette = useMemo(() => paletteOf(theme), [theme]);
   const [focused, setFocused] = useState(false);
   const bare = variant === "bare";
   return (
     <HostTextInput
+      ref={inputRef}
       accessibilityLabel={accessibilityLabel}
       autoFocus={autoFocus}
       editable={editable}
       keyboardType={keyboardType}
       multiline={multiline}
-      onBlur={() => setFocused(false)}
+      onBlur={(event) => { setFocused(false); onBlur?.(event); }}
       onChangeText={onChangeText}
-      onFocus={() => setFocused(true)}
+      onFocus={(event) => { setFocused(true); onFocus?.(event); }}
+      onSelectionChange={onSelectionChange}
       onSubmitEditing={onSubmitEditing}
       placeholder={placeholder}
       placeholderTextColor={theme.colors.foregroundMuted}
       selectionColor={theme.colors.accent}
+      selection={selection}
       style={[
         {
           backgroundColor: bare ? "transparent" : palette.control,

@@ -45,6 +45,7 @@ import {
   scopeLabel,
 } from "./studio/studio-formatters";
 import { CheckpointView } from "./studio/checkpoint-view";
+import { FindableMarkdownInput } from "./studio/findable-markdown-input";
 import {
   DraftListPane,
   type DraftSelectionLabels,
@@ -325,6 +326,7 @@ function DraftEditor({
   });
   const [title, setTitle] = useState("Untitled");
   const [markdown, setMarkdown] = useState("");
+  const [findOpen, setFindOpen] = useState(false);
   const [status, setStatus] = useState<DraftStatus>("draft");
   const [tags, setTags] = useState<string[]>([]);
   const [tagsBusy, setTagsBusy] = useState(false);
@@ -1011,34 +1013,38 @@ function DraftEditor({
       ) : null}
 
       <View style={{ gap: 4 }}>
-        <TagChipInput
-          compact={compact}
-          editable={tagsEditable}
-          error={tagsError ? t("editor.tags.error", { error: tagsError }) : null}
-          labels={tagLabels}
-          onChange={(nextTags) => void changeTags(nextTags)}
-          suggestions={tagSuggestions}
-          theme={theme}
-          value={tags}
-        />
+        <View style={{ alignItems: "flex-start", flexDirection: "row", gap: 8, minWidth: 0 }}>
+          <TagChipInput
+            compact={compact}
+            editable={tagsEditable}
+            error={tagsError ? t("editor.tags.error", { error: tagsError }) : null}
+            labels={tagLabels}
+            onChange={(nextTags) => void changeTags(nextTags)}
+            style={{ flex: 1, minWidth: 0 }}
+            suggestions={tagSuggestions}
+            theme={theme}
+            toolbarSized
+            value={tags}
+          />
+          <NativeButton
+            label={t("editor.find.open")}
+            onPress={() => setFindOpen(true)}
+            small
+            theme={theme}
+            variant="outline"
+          />
+        </View>
         {tagsBusy || globalTagsBusy ? <Hint theme={theme}>{t("editor.tags.saving")}</Hint> : null}
       </View>
-      <NativeTextInput
-        accessibilityLabel={t("editor.markdown.placeholder")}
+      <FindableMarkdownInput
         autoFocus={autoFocusBody}
+        compact={compact}
         editable={editable}
-        multiline
+        findOpen={findOpen}
+        onFindOpenChange={setFindOpen}
         onChangeText={(value) => { setMarkdown(value); markDirty(); }}
-        placeholder={t("editor.markdown.placeholder")}
-        style={{
-          fontSize: 15,
-          lineHeight: uiMetrics.longformLineHeight,
-          minHeight: compact ? 260 : 420,
-          paddingHorizontal: 0,
-        }}
         theme={theme}
         value={markdown}
-        variant="bare"
       />
       <PromptAgentActions
         boilerplateDisabled={!editable}
@@ -1257,6 +1263,8 @@ export function StudioView({
   theme,
   compact,
   hostLabel,
+  hostId,
+  navigation,
   view,
   projectContext,
   preferredAgentId,
@@ -1831,7 +1839,16 @@ export function StudioView({
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 14, padding: compact ? 12 : 16 }}>
             {catalogQuery.isPending ? <SkeletonRows rows={5} theme={theme} /> : null}
             {notices}
-            {catalogQuery.data ? <WorklogView compact={compact} theme={theme} timeline={catalogQuery.data.timeline} /> : null}
+            {catalogQuery.data ? (
+              <WorklogView
+                compact={compact}
+                onOpenAgent={navigation && hostId
+                  ? (agentId) => navigation.openAgent({ agentId, serverId: hostId })
+                  : undefined}
+                theme={theme}
+                timeline={catalogQuery.data.timeline}
+              />
+            ) : null}
           </ScrollView>
         </View>
       ) : compact ? (
