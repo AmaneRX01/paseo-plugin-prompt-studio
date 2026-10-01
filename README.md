@@ -32,9 +32,11 @@ Open **Settings → Plugins → Prompt Studio** (or **Prompt Studio settings** i
 
 Preferences are shared by clients of the same host and survive plugin reload and daemon restart. Existing settings migrate with shortcuts enabled. Settings remains accessible even if all shortcuts are disabled. Other clients without plugin UI open pick up visibility changes within about 15 seconds. Disabling an Explorer contribution does not forcibly close a tab already restored by Paseo.
 
+Provider/model pickers display available models as soon as they arrive, even while another provider is loading. They follow catalog updates for the selected host and Project/Workspace, retain known models during refresh, and recover through periodic reads after reconnect. **Refresh providers and models** asks the daemon to discover them again; individual provider failures remain visible alongside working providers.
+
 ## Requirements
 
-- Paseo 0.9.x on the daemon and any app loading the client contributions
+- Paseo 0.10.x on the daemon and any app loading the client contributions (SDK validation: 0.10.2)
 - Plugins enabled on the target Paseo daemon
 - Access to the Git repository, or a copy of the plugin directory, on the target daemon
 
@@ -133,8 +135,7 @@ Paseo 0.5.1 does not expose a provider-independent read allowlist or an OS/conta
 ├─ server/                          # Filesystem, registration, dispatch, and RPC handlers
 │  └─ storage/                      # Persistence models and safe file operations
 ├─ shared/                          # Zod RPC contracts and runtime-neutral DTOs
-├─ tests/                           # Storage, dispatch, recovery, and client-state tests
-├─ scripts/                         # Paseo compiler smoke and test tooling
+├─ tests/                           # Provider catalog and asynchronous recovery regressions
 └─ docs/                            # Product and development documentation
 ```
 
@@ -161,6 +162,8 @@ npm run smoke:compiler
 ```
 
 Run `npm run check` after TypeScript or test changes. Also run `npm run smoke:compiler` after changing either runtime entry, contribution registration, RPC wiring, module locations, or cross-runtime imports.
+
+`smoke:compiler` reloads the installed `prompt-studio` plugin using the selected daemon's compiler. It requires Paseo on PATH and validates both runtime bundles without restarting the daemon. Check `paseo plugin ls` afterward and require `running` with no error.
 
 ## Documentation
 

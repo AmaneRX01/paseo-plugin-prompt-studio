@@ -27,7 +27,6 @@ import {
   SectionTitle,
   SegmentedControl,
   SelectionRow,
-  Skeleton,
   SkeletonRows,
   StatusPill,
   font,
@@ -41,6 +40,8 @@ import type { StudioProjectContext } from "./studio-types";
 import { WORKSPACE_DIRECTORY_QUERY_KEY } from "./workspace-directory";
 import type { WorkspaceDirectoryEntry } from "./workspace-directory-state";
 import { groupWorkspacesByProject } from "./workspace-groups";
+import { useProviderCatalog } from "./use-provider-catalog";
+import { ProviderCatalogStatus } from "./provider-catalog-status";
 
 const RESOURCE_STALE_TIME_MS = 30_000;
 type NewAgentPlacementKind = "existing_workspace" | "new_workspace";
@@ -186,20 +187,11 @@ export function SendPanel({
       ?? selectedWorkspace?.projectRootPath
       ?? retainedSelection?.projectRootPath
       ?? null;
-  const providersQuery = useQuery({
-    queryKey: ["prompt-studio", "providers", providerDirectory ?? ""],
-    queryFn: () => paseo.providers.waitForReady({
-      cwd: providerDirectory ?? undefined,
-      timeoutMs: 20_000,
-    }),
+  const providersQuery = useProviderCatalog({
+    cwd: providerDirectory ?? undefined,
     enabled: targetKind === "new_agent" && Boolean(providerDirectory),
-    staleTime: RESOURCE_STALE_TIME_MS,
-    refetchInterval: false,
   });
-  const providerEntries = useMemo(
-    () => (providersQuery.data?.entries ?? []).filter((entry) => entry.enabled && entry.status === "ready" && (entry.models?.length ?? 0) > 0),
-    [providersQuery.data?.entries],
-  );
+  const providerEntries = providersQuery.entries;
   const selectedProvider = providerEntries.find((entry) => entry.provider === providerId) ?? null;
   const models = (selectedProvider?.models ?? []).filter((model) => model.isSelectable !== false);
   const selectedModel = models.find((model) => model.id === modelId) ?? null;
@@ -304,7 +296,7 @@ export function SendPanel({
 
   async function send() {
     if (targetKind === "existing_agent" && !selectedAgentId) return;
-    if (targetKind === "new_agent" && (!providerId || !modelId)) return;
+    if (targetKind === "new_agent" && (!selectedProvider || !selectedModel)) return;
     if (
       targetKind === "new_agent"
       && placementKind === "existing_workspace"
@@ -465,8 +457,8 @@ export function SendPanel({
     ? Boolean(selectedAgentId)
     : Boolean(
         providerDirectory
-        && providerId
-        && modelId
+        && selectedProvider
+        && selectedModel
         && (modes.length === 0 || modeId)
         && (placementKind === "new_workspace" ? selectedProject : selectedWorkspaceId),
       );
@@ -547,8 +539,7 @@ export function SendPanel({
             </Card>
 
             <Card theme={theme}>
-              {providersQuery.isPending ? <Skeleton height={uiMetrics.compactControlHeight} theme={theme} /> : null}
-              {providersQuery.isError ? <Hint danger theme={theme}>{errorMessage(providersQuery.error)}</Hint> : null}
+              <ProviderCatalogStatus catalog={providersQuery} enabled={Boolean(providerDirectory)} theme={theme} />
               <FieldLabel theme={theme}>{t("send.provider.required")}</FieldLabel>
               <SegmentedControl
                 onSelect={setProviderId}

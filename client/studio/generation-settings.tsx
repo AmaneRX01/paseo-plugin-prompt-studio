@@ -1,6 +1,6 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { usePaseo, useRpc } from "@getpaseo/plugin/client";
+import { useRpc } from "@getpaseo/plugin/client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import {
@@ -25,9 +25,10 @@ import {
   SkeletonRows,
 } from "../ui";
 import { errorMessage } from "./studio-formatters";
+import { useProviderCatalog } from "./use-provider-catalog";
+import { ProviderCatalogStatus } from "./provider-catalog-status";
 
 const SETTINGS_QUERY_KEY = ["prompt-studio", "generation-settings"] as const;
-const PROVIDERS_STALE_TIME_MS = 30_000;
 const DEFAULT_THINKING_ID = "__model_default__";
 
 interface ThinkingOption {
@@ -246,7 +247,6 @@ export function GenerationSettingsSection({
   visible: boolean;
 }) {
   const { t } = useI18n();
-  const paseo = usePaseo();
   const queryClient = useQueryClient();
   const getSettings = useRpc(generationSettingsGetRpc);
   const updateSettings = useRpc(generationSettingsUpdateRpc);
@@ -261,17 +261,10 @@ export function GenerationSettingsSection({
     staleTime: 30_000,
     refetchInterval: false,
   });
-  const providersQuery = useQuery({
-    queryKey: ["prompt-studio", "generation-providers"],
-    queryFn: () => paseo.providers.waitForReady({ timeoutMs: 20_000 }),
-    enabled: visible,
-    staleTime: PROVIDERS_STALE_TIME_MS,
-    refetchInterval: false,
-  });
+  const providersQuery = useProviderCatalog({ enabled: visible });
 
   const providers = useMemo<ProviderOption[]>(() => (
-    (providersQuery.data?.entries ?? [])
-      .filter((entry) => entry.enabled && entry.status === "ready")
+    providersQuery.entries
       .map((entry) => ({
         id: entry.provider,
         label: entry.label || entry.provider,
@@ -290,7 +283,7 @@ export function GenerationSettingsSection({
           })),
       }))
       .filter((entry) => entry.models.length > 0)
-  ), [providersQuery.data?.entries]);
+  ), [providersQuery.entries]);
 
   useEffect(() => {
     const settings = settingsQuery.data?.settings;
@@ -369,11 +362,11 @@ export function GenerationSettingsSection({
     <View style={{ gap: compact ? 8 : 10 }}>
       <SectionTitle theme={theme}>{t("settings.generation.title")}</SectionTitle>
       <Hint theme={theme}>{t("settings.generation.help")}</Hint>
-      {settingsQuery.isPending || providersQuery.isPending ? (
+      {settingsQuery.isLoading ? (
         <SkeletonRows rows={3} theme={theme} />
       ) : null}
       {settingsQuery.isError ? <Hint danger theme={theme}>{errorMessage(settingsQuery.error)}</Hint> : null}
-      {providersQuery.isError ? <Hint danger theme={theme}>{errorMessage(providersQuery.error)}</Hint> : null}
+      <ProviderCatalogStatus catalog={providersQuery} enabled={visible} theme={theme} />
       {settingsQuery.isError ? (
         <NativeButton
           disabled={settingsQuery.isFetching}
@@ -383,19 +376,6 @@ export function GenerationSettingsSection({
           theme={theme}
           variant="outline"
         />
-      ) : null}
-      {providersQuery.isError ? (
-        <NativeButton
-          disabled={providersQuery.isFetching}
-          label={t("settings.generation.retryProviders")}
-          onPress={() => void providersQuery.refetch()}
-          small
-          theme={theme}
-          variant="outline"
-        />
-      ) : null}
-      {!providersQuery.isPending && !providers.length ? (
-        <Hint danger theme={theme}>{t("settings.generation.noProviders")}</Hint>
       ) : null}
       {editable ? (
         <>

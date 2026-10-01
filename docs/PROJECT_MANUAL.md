@@ -141,7 +141,7 @@ The interface supports English and Simplified Chinese. It adapts to wide and com
 
 ### 5.1 Requirements
 
-- Paseo 0.9.x Desktop and daemon
+- Paseo 0.10.x Desktop and daemon (SDK validation: 0.10.2)
 - Plugins enabled on the target daemon
 - Access to the Git repository, or a copy of the plugin directory, on the target daemon
 
@@ -184,8 +184,8 @@ npm run check
 npm run smoke:compiler
 ```
 
-- `npm run check` performs strict TypeScript checking and integration tests.
-- `npm run smoke:compiler` uses the local Paseo plugin compiler to validate the client/server bundles, cleanup function, and contribution manifest.
+- `npm run check` performs strict TypeScript checking and provider-catalog regression tests.
+- `npm run smoke:compiler` reloads the installed `prompt-studio` plugin with the selected daemon's compiler, validating the client/server bundles and contribution manifest. Paseo must be on PATH; check `paseo plugin ls` for `running` afterward.
 
 ### 5.4 Reload after source changes
 

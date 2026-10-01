@@ -1,4 +1,4 @@
 {
   "id": "prompt-studio",
-  "requirements": { "paseo": "^0.9.0" }
+  "requirements": { "paseo": "^0.10.0" }
 }

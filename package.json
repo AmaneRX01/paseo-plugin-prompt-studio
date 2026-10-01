@@ -12,13 +12,13 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx --require ./scripts/test-platform.cjs --test tests/*.test.ts",
-    "smoke:compiler": "node ./scripts/paseo-compiler-smoke.js",
+    "test": "tsx --test tests/*.test.ts",
+    "smoke:compiler": "paseo plugin reload prompt-studio --json",
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
-    "@getpaseo/client": "0.9.1",
-    "@getpaseo/plugin": "0.9.1",
+    "@getpaseo/client": "0.10.2",
+    "@getpaseo/plugin": "0.10.2",
     "@tanstack/react-query": "^5.90.11",
     "@types/node": "^24.3.0",
     "@types/react": "~19.2.0",
